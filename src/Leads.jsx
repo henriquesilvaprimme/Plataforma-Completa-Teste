@@ -6,7 +6,7 @@ const GOOGLE_SHEETS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzSkLI
 const ALTERAR_ATRIBUIDO_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzSkLIDEJUeJMf8cQestU8jVAaafHPPStvYsnsJMbgoNyEXHkmz4eXica0UOEdUQFea/exec?v=alterar_atribuido';
 const SALVAR_OBSERVACAO_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzSkLIDEJUeJMf8cQestU8jVAaafHPPStvYsnsJMbgoNyEXHkmz4eXica0UOEdUQFea/exec?action=salvarObservacao';
 
-const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado, fetchLeadsFromSheet, scrollContainerRef }) => {
+const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado, fetchLeadsFromSheet, scrollContainerRef, onConfirmAgendamento, salvarObservacao, saveLocalChange }) => {
   const [selecionados, setSelecionados] = useState({});
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,7 +34,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
   useEffect(() => {
     const anyEditing = Object.values(isEditingObservacao).some(Boolean);
     if (!anyEditing) {
-      fetchLeadsFromSheet();
+      // removido fetch imediato para evitar reset; fetch periódicos em App.jsx vão sincronizar/atualizar
       const interval = setInterval(fetchLeadsFromSheet, 300000);
       return () => clearInterval(interval);
     }
@@ -60,7 +60,6 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
     const today = new Date().toLocaleDateString('pt-BR');
 
     leads.forEach(lead => {
-      // Ignorar Fechado e Perdido do total Geral (pendentes)
       if (lead.status !== 'Fechado' && lead.status !== 'Perdido') {
         todosCount++;
       }
@@ -69,13 +68,13 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
         emContatoCount++;
       } else if (lead.status === 'Sem Contato') {
         semContatoCount++;
-      } else if (lead.status.startsWith('Agendado')) {
+      } else if (lead.status && lead.status.startsWith('Agendado')) {
         const statusDateStr = lead.status.split(' - ')[1];
         if (statusDateStr) {
           const [dia, mes, ano] = statusDateStr.split('/');
           const statusDateFormatted = new Date(`${ano}-${mes}-${dia}T00:00:00`).toLocaleDateString('pt-BR');
           if (statusDateFormatted === today) {
-            agendadosCount++; // Contagem apenas para agendados de hoje
+            agendadosCount++;
           }
         }
       }
@@ -92,7 +91,6 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
 
 
   useEffect(() => {
-    // Usamos a contagem 'agendadosHoje' do useMemo
     setHasScheduledToday(contagens.agendadosHoje > 0);
   }, [contagens]);
 
@@ -207,23 +205,54 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
     }
     transferirLead(leadId, userId);
     const lead = leads.find((l) => l.id === leadId);
-    const leadAtualizado = { ...lead, usuarioId: userId };
-    enviarLeadAtualizado(leadAtualizado);
-  };
+    if (!lead) return;
+    const leadAtualizado = { ...lead, usuarioId: userId, responsavel: usuarios.find(u => u.id == userId)?.nome || '' };
 
-  const enviarLeadAtualizado = async (lead) => {
-    try {
-      await fetch(ALTERAR_ATRIBUIDO_SCRIPT_URL, {
+    // Salva alteração local (será sincronizada após 5 minutos)
+    if (typeof saveLocalChange === 'function') {
+      saveLocalChange({
+        id: leadId,
+        type: 'assign_user',
+        data: leadAtualizado
+      });
+    } else {
+      // Fallback: tenta enviar imediatamente (antigo comportamento)
+      fetch(ALTERAR_ATRIBUIDO_SCRIPT_URL, {
         method: 'POST',
         mode: 'no-cors',
-        body: JSON.stringify(lead),
+        body: JSON.stringify(leadAtualizado),
         headers: {
           'Content-Type': 'application/json',
         },
+      }).then(() => {
+        fetchLeadsFromSheet();
+      }).catch(err => console.error('Erro ao enviar lead:', err));
+    }
+  };
+
+  const enviarLeadAtualizado = async (lead) => {
+    // Este método agora delega para saveLocalChange — mantido para compatibilidade
+    if (typeof saveLocalChange === 'function') {
+      saveLocalChange({
+        id: lead.id,
+        type: 'assign_user',
+        data: lead
       });
-      fetchLeadsFromSheet();
-    } catch (error) {
-      console.error('Erro ao enviar lead:', error);
+      // não chamamos fetchLeadsFromSheet() imediatamente para evitar reset
+    } else {
+      try {
+        await fetch(ALTERAR_ATRIBUIDO_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          body: JSON.stringify(lead),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        fetchLeadsFromSheet();
+      } catch (error) {
+        console.error('Erro ao enviar lead:', error);
+      }
     }
   };
 
@@ -294,19 +323,31 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
 
     setIsLoading(true);
     try {
-      await fetch(SALVAR_OBSERVACAO_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        body: JSON.stringify({
-          leadId: leadId,
-          observacao: observacaoTexto,
-        }),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      setIsEditingObservacao(prev => ({ ...prev, [leadId]: false }));
-      fetchLeadsFromSheet();
+      // Salva localmente em vez de enviar de imediato
+      if (typeof saveLocalChange === 'function') {
+        saveLocalChange({
+          id: leadId,
+          type: 'salvarObservacao',
+          data: { leadId, observacao: observacaoTexto }
+        });
+        // atualiza UI local
+        setIsEditingObservacao(prev => ({ ...prev, [leadId]: false }));
+      } else {
+        // fallback para envio imediato (antigo comportamento)
+        await fetch(SALVAR_OBSERVACAO_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          body: JSON.stringify({
+            leadId: leadId,
+            observacao: observacaoTexto,
+          }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        setIsEditingObservacao(prev => ({ ...prev, [leadId]: false }));
+        fetchLeadsFromSheet();
+      }
     } catch (error) {
       console.error('Erro ao salvar observação:', error);
       alert('Erro ao salvar observação. Por favor, tente novamente.');
@@ -320,9 +361,11 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
   };
 
   const handleConfirmStatus = (leadId, novoStatus, phone) => {
+    // Atualiza estado local imediatamente
     onUpdateStatus(leadId, novoStatus, phone);
+
     const currentLead = leads.find(l => l.id === leadId);
-    const hasNoObservacao = !currentLead.observacao || currentLead.observacao.trim() === '';
+    const hasNoObservacao = !currentLead?.observacao || currentLead.observacao.trim() === '';
 
     if ((novoStatus === 'Em Contato' || novoStatus === 'Sem Contato' || novoStatus.startsWith('Agendado')) && hasNoObservacao) {
         setIsEditingObservacao(prev => ({ ...prev, [leadId]: true }));
@@ -331,7 +374,23 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
     } else {
         setIsEditingObservacao(prev => ({ ...prev, [leadId]: false }));
     }
-    fetchLeadsFromSheet();
+
+    // Salva a alteração local (será sincronizada após TTL)
+    if (typeof saveLocalChange === 'function') {
+      saveLocalChange({
+        id: leadId,
+        type: 'status_update',
+        data: { id: leadId, status: novoStatus, phone }
+      });
+    } else {
+      // fallback: tenta atualizar imediatamente via fetch (não recomendado se quiser evitar reset)
+      fetch(GOOGLE_SHEETS_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify({ action: 'status_update', id: leadId, status: novoStatus, phone }),
+        headers: { 'Content-Type': 'application/json' }
+      }).then(() => fetchLeadsFromSheet()).catch(err => console.error(err));
+    }
   };
 
   return (
@@ -454,7 +513,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
           Sem Contato <span className="text-sm font-extrabold ml-1">({contagens.semContato})</span>
         </button>
 
-        {contagens.agendadosHoje > 0 && ( /* Usamos a contagem para exibir o botão, mesmo que `hasScheduledToday` seja o mesmo */
+        {contagens.agendadosHoje > 0 && (
           <button
             onClick={() => aplicarFiltroStatus('Agendado')}
             className={`
@@ -494,7 +553,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
               return (
                 <div
                   key={lead.id}
-                  className="bg-white rounded-xl shadow-lg hover:shadow-xl transition duration-300 p-6 relative border-t-4 border-indigo-500" // Card Principal
+                  className="bg-white rounded-xl shadow-lg hover:shadow-xl transition duration-300 p-6 relative border-t-4 border-indigo-500"
                 >
                   
                   <div className={`grid ${hasObservacaoSection ? 'lg:grid-cols-2' : 'lg:grid-cols-1'} gap-6`}>
