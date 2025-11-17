@@ -28,7 +28,7 @@ function ScrollToTop({ scrollContainerRef }) {
   return null;
 }
 
-const GOOGLE_APPS_SCRIPT_BASE_URL = 'https://script.google.com/macros/s/AKfycbzSkLIDEJUeJMf8cQestU8jVAaafHPPStvYsnsJMbgoNyEXHkmz4eXica0UOEdUQFea/exec';
+const GOOGLE_APPS_SCRIPT_BASE_URL = 'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec';
 const GOOGLE_SHEETS_SCRIPT_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=getLeads`;
 const GOOGLE_SHEETS_LEADS_FECHADOS = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=pegar_clientes_fechados`;
 const GOOGLE_SHEETS_USERS_AUTH_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=pegar_usuario`;
@@ -95,17 +95,14 @@ function App() {
 
   // Save a local change (used by child components, optimistic update already handled there)
   const saveLocalChange = (change) => {
-    // change = { id: <idOuUuid>, type: 'status_update'|'assign_user'|'observacao'|..., data: {...} }
+    // change = { id: <idOuUuid>, type: 'status_update'|'assign_user'|'salvarObservacao'|..., data: {...} }
     const key = String(change.id ?? (change.data && change.data.id) ?? crypto.randomUUID());
     const timestamp = Date.now();
     localChangesRef.current[key] = { ...change, timestamp, id: key };
     persistLocalChangesToStorage();
   };
 
-  // Expose function to children later via props
-  // -----------------------------------------------------------
-
-  // Fetch usuários (mesma lógica original)
+  // ------------------ FETCH USUÁRIOS ------------------
   const fetchUsuariosForLogin = async () => {
     try {
       const response = await fetch(GOOGLE_SHEETS_USERS_AUTH_URL);
@@ -178,11 +175,9 @@ function App() {
   const applyLocalChangesToFetched = (fetchedLeads) => {
     const now = Date.now();
     const merged = fetchedLeads.map(lead => {
-      // procurar localChange por id (string/number)
       const key = Object.keys(localChangesRef.current).find(k => {
         const ch = localChangesRef.current[k];
         if (!ch) return false;
-        // comparar por id ou por telefone (algumas alterações usam phone)
         if (String(ch.id) === String(lead.id) || (ch.data && String(ch.data.id) === String(lead.id))) return true;
         if (ch.data && ch.data.phone && String(ch.data.phone) === String(lead.phone)) return true;
         return false;
@@ -191,7 +186,6 @@ function App() {
       if (key) {
         const change = localChangesRef.current[key];
         if (now - change.timestamp < SYNC_DELAY_MS) {
-          // merge: mantemos os campos alterados localmente
           return { ...lead, ...change.data };
         }
       }
@@ -205,7 +199,6 @@ function App() {
       if (Date.now() - change.timestamp < SYNC_DELAY_MS) {
         const exists = merged.some(l => String(l.id) === String(change.id) || (change.data && String(l.phone) === String(change.data.phone)));
         if (!exists) {
-          // criar um objeto mínimo com os dados da mudança
           merged.unshift({ id: change.id, ...change.data });
         }
       }
@@ -578,18 +571,34 @@ function App() {
     }
   };
 
-  // FUNÇÃO PARA SALVAR OBSERVAÇÃO (quando chamada diretamente)
-  // OBS: Este código original fazia um fetch imediatamente. Agora as observações são salvas localmente
-  // e sincronizadas após o TTL. Se quiser manter o envio imediato para observações, podemos adaptar.
+  // FUNÇÃO PARA SALVAR OBSERVAÇÃO (restaurada para enviar imediatamente, como antes)
   const salvarObservacao = async (leadId, observacao) => {
     try {
-      // Criar alteração local e persistir (será sincronizada após 5min)
-      saveLocalChange({ id: leadId, type: 'salvarObservacao', data: { leadId, observacao } });
+      const response = await fetch(SALVAR_OBSERVACAO_SCRIPT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'salvarObservacao',
+          leadId: leadId,
+          observacao: observacao,
+        }),
+      });
 
-      // Atualiza UI local
-      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, observacao } : l));
+      if (response && response.ok) {
+        console.log('Observação salva com sucesso!');
+        // Recarrega os leads para que a nova observação apareça
+        await fetchLeadsFromSheet();
+      } else {
+        // Se servidor não retornar ok (em modo no-cors pode ser indefinido), ainda chamamos fetch para tentar atualizar
+        console.warn('Resposta não OK ao salvar observação (pode ser no-cors):', response);
+        setTimeout(fetchLeadsFromSheet, 800);
+      }
     } catch (error) {
-      console.error('Erro ao salvar observação localmente:', error);
+      console.error('Erro de rede ao salvar observação:', error);
+      // Tentar atualizar localmente mesmo em erro de rede
+      setTimeout(fetchLeadsFromSheet, 1200);
     }
   };
 
