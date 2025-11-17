@@ -35,6 +35,12 @@ const GOOGLE_SHEETS_USERS_AUTH_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=pegar_usu
 const SALVAR_AGENDAMENTO_SCRIPT_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?action=salvarAgendamento`;
 const SALVAR_OBSERVACAO_SCRIPT_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}`;
 
+// ======= CONFIGURAÇÃO DE SINCRONIZAÇÃO LOCAL =======
+const LOCAL_CHANGES_KEY = 'leads_local_changes_v1';
+const SYNC_DELAY_MS = 5 * 60 * 1000; // 5 minutos
+const SYNC_CHECK_INTERVAL_MS = 1000; // checa a cada 1s
+// =====================================================
+
 function App() {
   const navigate = useNavigate();
   const mainContentRef = useRef(null);
@@ -54,12 +60,52 @@ function App() {
   const [leadsCount, setLeadsCount] = useState(0);
   const [ultimoFechadoId, setUltimoFechadoId] = useState(null);
 
+  // Referência em memória das alterações locais (evita leituras/desescritas excessivas)
+  const localChangesRef = useRef({}); // formato: { [uuidOrId]: { id, type, data, timestamp } }
+
+  // Carrega background
   useEffect(() => {
     const img = new Image();
     img.src = '/background.png';
     img.onload = () => setBackgroundLoaded(true);
   }, []);
 
+  // ------------------ Helpers de localChanges ------------------
+  const loadLocalChangesFromStorage = () => {
+    try {
+      const raw = localStorage.getItem(LOCAL_CHANGES_KEY);
+      if (raw) {
+        localChangesRef.current = JSON.parse(raw);
+      } else {
+        localChangesRef.current = {};
+      }
+    } catch (err) {
+      console.error('Erro ao carregar localChanges:', err);
+      localChangesRef.current = {};
+    }
+  };
+
+  const persistLocalChangesToStorage = () => {
+    try {
+      localStorage.setItem(LOCAL_CHANGES_KEY, JSON.stringify(localChangesRef.current));
+    } catch (err) {
+      console.error('Erro ao salvar localChanges:', err);
+    }
+  };
+
+  // Save a local change (used by child components, optimistic update already handled there)
+  const saveLocalChange = (change) => {
+    // change = { id: <idOuUuid>, type: 'status_update'|'assign_user'|'observacao'|..., data: {...} }
+    const key = String(change.id ?? (change.data && change.data.id) ?? crypto.randomUUID());
+    const timestamp = Date.now();
+    localChangesRef.current[key] = { ...change, timestamp, id: key };
+    persistLocalChangesToStorage();
+  };
+
+  // Expose function to children later via props
+  // -----------------------------------------------------------
+
+  // Fetch usuários (mesma lógica original)
   const fetchUsuariosForLogin = async () => {
     try {
       const response = await fetch(GOOGLE_SHEETS_USERS_AUTH_URL);
@@ -128,6 +174,46 @@ function App() {
     }
   };
 
+  // ------------------ FETCH LEADS (com merge de localChanges) ------------------
+  const applyLocalChangesToFetched = (fetchedLeads) => {
+    const now = Date.now();
+    const merged = fetchedLeads.map(lead => {
+      // procurar localChange por id (string/number)
+      const key = Object.keys(localChangesRef.current).find(k => {
+        const ch = localChangesRef.current[k];
+        if (!ch) return false;
+        // comparar por id ou por telefone (algumas alterações usam phone)
+        if (String(ch.id) === String(lead.id) || (ch.data && String(ch.data.id) === String(lead.id))) return true;
+        if (ch.data && ch.data.phone && String(ch.data.phone) === String(lead.phone)) return true;
+        return false;
+      });
+
+      if (key) {
+        const change = localChangesRef.current[key];
+        if (now - change.timestamp < SYNC_DELAY_MS) {
+          // merge: mantemos os campos alterados localmente
+          return { ...lead, ...change.data };
+        }
+      }
+      return lead;
+    });
+
+    // Também adicionar leads que existem apenas nas localChanges (novo lead local)
+    Object.keys(localChangesRef.current).forEach(k => {
+      const change = localChangesRef.current[k];
+      if (!change) return;
+      if (Date.now() - change.timestamp < SYNC_DELAY_MS) {
+        const exists = merged.some(l => String(l.id) === String(change.id) || (change.data && String(l.phone) === String(change.data.phone)));
+        if (!exists) {
+          // criar um objeto mínimo com os dados da mudança
+          merged.unshift({ id: change.id, ...change.data });
+        }
+      }
+    });
+
+    return merged;
+  };
+
   const fetchLeadsFromSheet = async () => {
     try {
       const response = await fetch(GOOGLE_SHEETS_SCRIPT_URL);
@@ -135,7 +221,7 @@ function App() {
 
       if (Array.isArray(data)) {
         const sortedData = data;
-        
+
         const formattedLeads = sortedData.map((item, index) => ({
           id: item.id ? Number(item.id) : index + 1,
           name: item.name || item.Name || '',
@@ -161,12 +247,16 @@ function App() {
           agendamento: item.agendamento || '',
           agendados: item.agendados || '',
           // NOVOS CAMPOS
-          MeioPagamento: item.MeioPagamento || '', 
+          MeioPagamento: item.MeioPagamento || '',
           CartaoPortoNovo: item.CartaoPortoNovo || '',
         }));
 
+        // Aplicar merge com alterações locais (se existirem)
+        loadLocalChangesFromStorage();
+        const merged = applyLocalChangesToFetched(formattedLeads);
+
         if (!leadSelecionado) {
-          setLeads(formattedLeads);
+          setLeads(merged);
         }
       } else {
         if (!leadSelecionado) {
@@ -180,6 +270,7 @@ function App() {
       }
     }
   };
+  // ------------------------------------------------------------------------------
 
   useEffect(() => {
     if (!isEditing) {
@@ -191,6 +282,7 @@ function App() {
     }
   }, [leadSelecionado, isEditing]);
 
+  // ------------------ LEADS FECHADOS (mesma lógica, sem merge por enquanto) -------------
   const fetchLeadsFechadosFromSheet = async () => {
     try {
       const response = await fetch(GOOGLE_SHEETS_LEADS_FECHADOS)
@@ -199,7 +291,6 @@ function App() {
       const formattedData = data.map(item => ({
         ...item,
         insuranceType: item.insuranceType || '',
-        // NOVOS CAMPOS
         MeioPagamento: item.MeioPagamento || '',
         CartaoPortoNovo: item.CartaoPortoNovo || '',
       }));
@@ -220,18 +311,18 @@ function App() {
       return () => clearInterval(interval);
     }
   }, [isEditing]);
+  // ------------------------------------------------------------------------------
 
   // =========================================================================
   // === LÓGICA ADICIONADA: Função para atualizar o nome em Leads Fechados ===
   // =========================================================================
   const handleLeadFechadoNameUpdate = (leadId, novoNome) => {
     setLeadsFechados(prevLeads => {
-      // O ID do lead fechado é uma string, garantimos a comparação
       const updatedLeads = prevLeads.map(lead => {
         if (String(lead.ID) === String(leadId)) {
           return {
             ...lead,
-            name: novoNome, // Atualiza o nome do lead
+            name: novoNome,
           };
         }
         return lead;
@@ -241,6 +332,7 @@ function App() {
   };
   // =========================================================================
 
+  // ------------------ Funções de adicionar/atualizar estado local --------------
   const adicionarUsuario = (usuario) => {
     setUsuarios((prev) => [...prev, { ...usuario, id: prev.length + 1 }]);
   };
@@ -272,6 +364,7 @@ function App() {
   };
 
   const atualizarStatusLead = (id, novoStatus, phone) => {
+    // Atualiza UI local imediatamente (optimistic)
     setLeads((prev) =>
       prev.map((lead) =>
         lead.phone === phone ? { ...lead, status: novoStatus, confirmado: true } : lead
@@ -308,8 +401,8 @@ function App() {
               Parcelamento: leadParaAdicionar.Parcelamento || "",
               VigenciaInicial: leadParaAdicionar.VigenciaInicial || "",
               VigenciaFinal: leadParaAdicionar.VigenciaFinal || "",
-              MeioPagamento: leadParaAdicionar.MeioPagamento || "", // NOVO
-              CartaoPortoNovo: leadParaAdicionar.CartaoPortoNovo || "", // NOVO
+              MeioPagamento: leadParaAdicionar.MeioPagamento || "",
+              CartaoPortoNovo: leadParaAdicionar.CartaoPortoNovo || "",
               id: leadParaAdicionar.id || null,
               usuario: leadParaAdicionar.usuario || "",
               nome: leadParaAdicionar.nome || "",
@@ -329,7 +422,7 @@ function App() {
       });
     }
   };
-  
+
   const handleConfirmAgendamento = async (leadId, dataAgendada) => {
     try {
       await fetch(SALVAR_AGENDAMENTO_SCRIPT_URL, {
@@ -346,7 +439,6 @@ function App() {
 
       // Recarrega os leads para que a nova data apareça
       await fetchLeadsFromSheet();
-      
     } catch (error) {
       console.error('Erro ao confirmar agendamento:', error);
     }
@@ -385,7 +477,6 @@ function App() {
     lead.Parcelamento = parcelamento;
     lead.VigenciaFinal = vigenciaFinal || '';
     lead.VigenciaInicial = vigenciaInicial || '';
-    // ATUALIZAÇÃO DOS NOVOS CAMPOS NO OBJETO LEAD
     lead.MeioPagamento = meioPagamento || '';
     lead.CartaoPortoNovo = cartaoPortoNovo || '';
 
@@ -400,7 +491,6 @@ function App() {
           Parcelamento: parcelamento,
           VigenciaFinal: vigenciaFinal || '',
           VigenciaInicial: vigenciaInicial || '',
-          // ATUALIZAÇÃO DOS NOVOS CAMPOS NO ESTADO
           MeioPagamento: meioPagamento || '',
           CartaoPortoNovo: cartaoPortoNovo || ''
         } : l
@@ -487,30 +577,114 @@ function App() {
       alert('Login ou senha inválidos ou usuário inativo.');
     }
   };
-  
-  // FUNÇÃO PARA SALVAR OBSERVAÇÃO
+
+  // FUNÇÃO PARA SALVAR OBSERVAÇÃO (quando chamada diretamente)
+  // OBS: Este código original fazia um fetch imediatamente. Agora as observações são salvas localmente
+  // e sincronizadas após o TTL. Se quiser manter o envio imediato para observações, podemos adaptar.
   const salvarObservacao = async (leadId, observacao) => {
     try {
-      const response = await fetch(SALVAR_OBSERVACAO_SCRIPT_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'salvarObservacao',
-          leadId: leadId,
-          observacao: observacao,
-        }),
-      });
-  
-      if (response.ok) {
-        console.log('Observação salva com sucesso!');
-        fetchLeadsFromSheet(); // Recarrega os leads para que a nova observação apareça
-      } else {
-        console.error('Erro ao salvar observação:', response.statusText);
-      }
+      // Criar alteração local e persistir (será sincronizada após 5min)
+      saveLocalChange({ id: leadId, type: 'salvarObservacao', data: { leadId, observacao } });
+
+      // Atualiza UI local
+      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, observacao } : l));
     } catch (error) {
-      console.error('Erro de rede ao salvar observação:', error);
+      console.error('Erro ao salvar observação localmente:', error);
+    }
+  };
+
+  // ------------------ SYNC WORKER: envia alterações após expirarem ------------------
+  useEffect(() => {
+    // carrega alterações ao montar
+    loadLocalChangesFromStorage();
+
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      const dueKeys = [];
+      const keys = Object.keys(localChangesRef.current);
+
+      for (const k of keys) {
+        const change = localChangesRef.current[k];
+        if (!change) continue;
+        if (now - change.timestamp >= SYNC_DELAY_MS) {
+          dueKeys.push(k);
+        }
+      }
+
+      if (dueKeys.length === 0) return;
+
+      // Processa cada alteração vencida (envia POST genérico; você pode customizar por tipo)
+      for (const key of dueKeys) {
+        const change = localChangesRef.current[key];
+        if (!change) continue;
+
+        try {
+          // Envio genérico: action=change.type, data=change.data
+          await fetch(GOOGLE_APPS_SCRIPT_BASE_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              action: change.type,
+              data: change.data,
+            }),
+          });
+
+          // Após envio, removemos a alteração local
+          delete localChangesRef.current[key];
+          persistLocalChangesToStorage();
+
+          // Forçar um fetch para garantir que o estado servidor seja refletido
+          setTimeout(() => {
+            fetchLeadsFromSheet();
+            fetchLeadsFechadosFromSheet();
+          }, 800);
+        } catch (err) {
+          console.error('Erro ao sincronizar alteração local:', err);
+          // Em caso de erro, mantemos a alteração para tentar de novo posteriormente
+        }
+      }
+    }, SYNC_CHECK_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatarDataParaDDMMYYYY = (dataString) => {
+    if (!dataString) return '';
+
+    try {
+      let dateObj;
+      const partesHifen = dataString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (partesHifen) {
+        dateObj = new Date(`${partesHifen[1]}-${partesHifen[2]}-${partesHifen[3]}T00:00:00`);
+      } else {
+        const partesBarra = dataString.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (partesBarra) {
+          dateObj = new Date(`${partesBarra[3]}-${partesBarra[2]}-${partesBarra[1]}T00:00:00`);
+        } else {
+          dateObj = new Date(dataString);
+        }
+      }
+
+      if (isNaN(dateObj.getTime())) {
+        console.warn('formatarDataParaDDMMYYYY: Data inválida detectada:', dataString);
+        return dataString;
+      }
+
+      const dia = String(dateObj.getDate()).padStart(2, '0');
+      const mesIndex = dateObj.getMonth();
+      const ano = dateObj.getFullYear();
+      const nomeMeses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                         "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+      const mesExtenso = nomeMeses[mesIndex];
+      const anoCurto = String(ano).substring(2);
+
+      return `${dia}/${mesExtenso}/${anoCurto}`;
+    } catch (e) {
+      console.error("Erro na função formatarDataParaDDMMYYYY:", e);
+      return dataString;
     }
   };
 
@@ -607,6 +781,8 @@ function App() {
                 scrollContainerRef={mainContentRef}
                 onConfirmAgendamento={handleConfirmAgendamento}
                 salvarObservacao={salvarObservacao}
+                // NOVO: função que salva alterações localmente para sincronizar depois
+                saveLocalChange={saveLocalChange}
               />
             }
           />
@@ -627,10 +803,7 @@ function App() {
                 formatarDataParaExibicao={formatarDataParaExibicao}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
-                // =========================================================================
-                // === PROPRIEDADE ADICIONADA AQUI! ===
                 onLeadNameUpdate={handleLeadFechadoNameUpdate}
-                // =========================================================================
               />
             }
           />
@@ -678,42 +851,5 @@ function App() {
     </div>
   );
 }
-
-const formatarDataParaDDMMYYYY = (dataString) => {
-  if (!dataString) return '';
-
-  try {
-    let dateObj;
-    const partesHifen = dataString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (partesHifen) {
-      dateObj = new Date(`${partesHifen[1]}-${partesHifen[2]}-${partesHifen[3]}T00:00:00`);
-    } else {
-      const partesBarra = dataString.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-      if (partesBarra) {
-        dateObj = new Date(`${partesBarra[3]}-${partesBarra[2]}-${partesBarra[1]}T00:00:00`);
-      } else {
-        dateObj = new Date(dataString);
-      }
-    }
-
-    if (isNaN(dateObj.getTime())) {
-      console.warn('formatarDataParaDDMMYYYY: Data inválida detectada:', dataString);
-      return dataString;
-    }
-
-    const dia = String(dateObj.getDate()).padStart(2, '0');
-    const mesIndex = dateObj.getMonth();
-    const ano = dateObj.getFullYear();
-    const nomeMeses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                       "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-    const mesExtenso = nomeMeses[mesIndex];
-    const anoCurto = String(ano).substring(2);
-
-    return `${dia}/${mesExtenso}/${anoCurto}`;
-  } catch (e) {
-    console.error("Erro na função formatarDataParaDDMMYYYY:", e);
-    return dataString;
-  }
-};
 
 export default App;
