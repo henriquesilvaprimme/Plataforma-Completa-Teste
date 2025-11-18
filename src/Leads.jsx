@@ -91,14 +91,40 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
   const handleRefreshLeads = async () => {
     setIsLoading(true);
     try {
+      // 1) Enviar uma requisição ao script do Google para forçar sincronização.
+      //    Usamos mode:'no-cors' pois muitas integrações com Apps Script estão configuradas desta forma.
+      //    Mesmo que a resposta não seja legível por causa de no-cors, o servidor receberá a requisição e
+      //    deve processar as atualizações (status, atribuições, observações, etc).
+      try {
+        await fetch(`${GOOGLE_SHEETS_SCRIPT_URL}?action=syncAll`, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ forceSync: true }),
+        });
+      } catch (syncErr) {
+        // fetch em no-cors normalmente lança um erro ao tentar ler a resposta — ignoramos porque o objetivo
+        // é apenas enviar a requisição para o Apps Script processar os dados.
+        console.warn('Sync request (no-cors) enviada; pode ser que a resposta não seja acessível no cliente.', syncErr);
+      }
+
+      // 2) Aguarde um curto momento para o Apps Script processar (ajuste se necessário).
+      await new Promise((res) => setTimeout(res, 800));
+
+      // 3) Buscar os leads atualizados (retorno com dados consolidados do Sheets).
       await fetchLeadsFromSheet();
+
+      // 4) Atualizar o estado local de edição de observações conforme os dados recém-buscados.
       const refreshedIsEditingObservacao = {};
       leads.forEach(lead => {
         refreshedIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
       });
       setIsEditingObservacao(refreshedIsEditingObservacao);
     } catch (error) {
-      console.error('Erro ao buscar leads atualizados:', error);
+      console.error('Erro ao forçar sincronização/atualização:', error);
+      alert('Erro ao atualizar dados do Sheets. Verifique a conexão e tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -388,7 +414,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
           </h1>
           
           {/* Botão de Refresh e Sino de Notificação (reagrupados) */}
-          <div className="flex itens-center gap-4">
+          <div className="flex items-center gap-4">
             
             {/* Botão de Refresh */}
             <button
