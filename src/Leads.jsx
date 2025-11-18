@@ -6,7 +6,7 @@ const GOOGLE_SHEETS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby8vuj
 const ALTERAR_ATRIBUIDO_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec?v=alterar_atribuido';
 const SALVAR_OBSERVACAO_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec?action=salvarObservacao';
 
-const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado, fetchLeadsFromSheet, scrollContainerRef, saveLocalChange }) => {
+const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado, fetchLeadsFromSheet, scrollContainerRef, saveLocalChange, forceSyncWithSheets }) => {
   const [selecionados, setSelecionados] = useState({});
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -91,32 +91,36 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
   const handleRefreshLeads = async () => {
     setIsLoading(true);
     try {
-      // 1) Enviar uma requisição ao script do Google para forçar sincronização.
-      //    Usamos mode:'no-cors' pois muitas integrações com Apps Script estão configuradas desta forma.
-      //    Mesmo que a resposta não seja legível por causa de no-cors, o servidor receberá a requisição e
-      //    deve processar as atualizações (status, atribuições, observações, etc).
-      try {
-        await fetch(`${GOOGLE_SHEETS_SCRIPT_URL}?action=syncAll`, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ forceSync: true }),
-        });
-      } catch (syncErr) {
-        // fetch em no-cors normalmente lança um erro ao tentar ler a resposta — ignoramos porque o objetivo
-        // é apenas enviar a requisição para o Apps Script processar os dados.
-        console.warn('Sync request (no-cors) enviada; pode ser que a resposta não seja acessível no cliente.', syncErr);
+      // Se a prop forceSyncWithSheets foi fornecida pelo App, usamos ela — ela garante
+      // que alterações locais pendentes sejam descartadas/forçadas e que a busca venha "pura" do Sheets.
+      if (typeof forceSyncWithSheets === 'function') {
+        await forceSyncWithSheets();
+      } else {
+        // Fallback: comportamento anterior — envia syncAll e busca os leads.
+        try {
+          await fetch(`${GOOGLE_SHEETS_SCRIPT_URL}?action=syncAll`, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ forceSync: true }),
+          });
+        } catch (syncErr) {
+          console.warn('Sync request (no-cors) enviada; pode ser que a resposta não seja acessível no cliente.', syncErr);
+        }
+
+        // Aguarde um curto momento para o Apps Script processar (ajuste se necessário).
+        await new Promise((res) => setTimeout(res, 800));
+
+        // Buscar os leads atualizados (retorno com dados consolidados do Sheets).
+        await fetchLeadsFromSheet();
       }
 
-      // 2) Aguarde um curto momento para o Apps Script processar (ajuste se necessário).
-      await new Promise((res) => setTimeout(res, 800));
+      // Pequena espera para garantir que o fetch no pai atualize as props antes de recalcular locais
+      await new Promise((res) => setTimeout(res, 400));
 
-      // 3) Buscar os leads atualizados (retorno com dados consolidados do Sheets).
-      await fetchLeadsFromSheet();
-
-      // 4) Atualizar o estado local de edição de observações conforme os dados recém-buscados.
+      // Atualizar o estado local de edição de observações conforme os dados recém-buscados.
       const refreshedIsEditingObservacao = {};
       leads.forEach(lead => {
         refreshedIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
@@ -407,7 +411,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
 
       {/* 2. Cabeçalho Principal e Área de Controles */}
       <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4 mb-4">
+        <div className="flex flex-wrap itens-center justify-between gap-4 border-b pb-4 mb-4">
           <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
             <Bell size={32} className="text-indigo-500 mr-3" />
             Leads
@@ -492,7 +496,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
         <button
           onClick={() => aplicarFiltroStatus('Em Contato')}
           className={`
-            px-5 py-2 rounded-full font-bold transition duration-300 shadow-lg
+            px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
             ${filtroStatus === 'Em Contato' ? 'bg-orange-600 text-white ring-2 ring-orange-400' : 'bg-orange-500 text-white hover:bg-orange-600'}
           `}
         >
@@ -502,7 +506,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
         <button
           onClick={() => aplicarFiltroStatus('Sem Contato')}
           className={`
-            px-5 py-2 rounded-full font-bold transition duration-300 shadow-lg
+            px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
             ${filtroStatus === 'Sem Contato' ? 'bg-gray-700 text-white ring-2 ring-gray-400' : 'bg-gray-500 text-white hover:bg-gray-600'}
           `}
         >
@@ -513,7 +517,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
           <button
             onClick={() => aplicarFiltroStatus('Agendado')}
             className={`
-              px-5 py-2 rounded-full font-bold transition duration-300 shadow-lg
+              px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
               ${filtroStatus === 'Agendado' ? 'bg-blue-700 text-white ring-2 ring-blue-400' : 'bg-blue-500 text-white hover:bg-blue-600'}
             `}
           >
@@ -524,7 +528,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
         <button
           onClick={() => aplicarFiltroStatus(null)}
           className={`
-            px-5 py-2 rounded-full font-bold transition duration-300 shadow-lg
+            px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
             ${filtroStatus === null ? 'bg-gray-800 text-white ring-2 ring-gray-500' : 'bg-gray-600 text-white hover:bg-gray-700'}
           `}
         >
@@ -659,7 +663,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
               <button
                 onClick={handlePaginaAnterior}
                 disabled={paginaCorrigida <= 1 || isLoading}
-                className={`px-4 py-2 rounded-lg border text-sm font-medium transition duration-150 shadow-md ${
+                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
                   (paginaCorrigida <= 1 || isLoading) 
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed' 
                   : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
@@ -675,7 +679,7 @@ const Leads = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado,
               <button
                 onClick={handlePaginaProxima}
                 disabled={paginaCorrigida >= totalPaginas || isLoading}
-                className={`px-4 py-2 rounded-lg border text-sm font-medium transition duration-150 shadow-md ${
+                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
                   (paginaCorrigida >= totalPaginas || isLoading) 
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed' 
                   : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
