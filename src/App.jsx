@@ -61,7 +61,7 @@ function App() {
   const [ultimoFechadoId, setUltimoFechadoId] = useState(null);
 
   // Referência em memória das alterações locais (evita leituras/desescritas excessivas)
-  const localChangesRef = useRef({}); // formato: { [uuidOrId]: { id, type, data, timestamp } }
+  const localChangesRef = useRef({}); // formato: { [key]: { id, leadId, type, data, timestamp, ... } }
 
   // Carrega background
   useEffect(() => {
@@ -75,7 +75,7 @@ function App() {
     try {
       const raw = localStorage.getItem(LOCAL_CHANGES_KEY);
       if (raw) {
-        localChangesRef.current = JSON.parse(raw);
+        localChangesRef.current = JSON.parse(raw) || {};
       } else {
         localChangesRef.current = {};
       }
@@ -93,13 +93,93 @@ function App() {
     }
   };
 
+  // Aplica uma alteração no estado local imediatamente (optimistic)
+  const applyChangeToLocalState = (change) => {
+    try {
+      const leadId = change.leadId || change.data?.leadId || change.data?.id || change.data?.ID || change.id;
+      const type = change.type;
+      const data = change.data || {};
+
+      if (!leadId && type !== 'criarLead') return;
+
+      // Atualiza leads (se aplicável)
+      setLeads(prev => {
+        if (!prev || prev.length === 0) return prev;
+        const updated = prev.map(l => {
+          // tentar casar por id numérico ou string
+          if (String(l.id) === String(leadId) || String(l.ID) === String(leadId) || String(data.phone || '') === String(l.phone || '')) {
+            let copy = { ...l };
+            if (type === 'alterarAtribuido') {
+              // data.usuarioId ou data.usuario pode estar presente
+              if (data.usuarioId !== undefined) {
+                copy.usuarioId = data.usuarioId;
+                // tentar preencher nome do responsavel a partir de lista de usuarios
+                const u = usuarios.find(u => String(u.id) === String(data.usuarioId));
+                if (u) copy.responsavel = u.nome;
+              } else if (data.responsavel !== undefined) {
+                copy.responsavel = data.responsavel;
+              }
+            } else if (type === 'salvarObservacao') {
+              copy.observacao = data.observacao ?? copy.observacao;
+            } else if (type === 'atualizarStatus') {
+              copy.status = data.status ?? copy.status;
+              if (data.phone) copy.phone = data.phone;
+              copy.confirmado = true;
+            } else if (type === 'salvarAgendamento') {
+              copy.agendamento = data.dataAgendada ?? copy.agendamento;
+            }
+            return copy;
+          }
+          return l;
+        });
+        return updated;
+      });
+
+      // Atualiza leadsFechados (se for alteração de seguradora)
+      if (type === 'alterar_seguradora') {
+        setLeadsFechados(prev => {
+          if (!prev || prev.length === 0) return prev;
+          const updated = prev.map(lf => {
+            if (String(lf.ID) === String(leadId) || String(lf.id) === String(leadId)) {
+              return { ...lf, ...data };
+            }
+            return lf;
+          });
+          return updated;
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao aplicar alteração local ao estado:', err);
+    }
+  };
+
   // Save a local change (used by child components, optimistic update already handled there)
   const saveLocalChange = (change) => {
-    // change = { id: <idOuUuid>, type: 'status_update'|'assign_user'|'salvarObservacao'|..., data: {...} }
-    const key = String(change.id ?? (change.data && change.data.id) ?? crypto.randomUUID());
-    const timestamp = Date.now();
-    localChangesRef.current[key] = { ...change, timestamp, id: key };
-    persistLocalChangesToStorage();
+    // change = { id: <idOuUuid>, type: 'status_update'|'alterarAtribuido'|'salvarObservacao'|..., data: {...} }
+    // Normaliza chave/leadId para garantir matching estável
+    try {
+      const derivedLeadId = change.id ?? change.data?.id ?? change.data?.ID ?? change.data?.leadId ?? change.data?.leadId ?? change.data?.phone ?? null;
+      const keyBase = derivedLeadId ? String(derivedLeadId) : crypto.randomUUID();
+      const key = keyBase;
+
+      const timestamp = Date.now();
+
+      // Normalize stored object to always include leadId field for matching
+      const stored = {
+        ...change,
+        id: key,
+        leadId: derivedLeadId ?? null,
+        timestamp,
+      };
+
+      localChangesRef.current[key] = stored;
+      persistLocalChangesToStorage();
+
+      // Aplicar imediatamente no estado local para segurar alterações (optimistic)
+      applyChangeToLocalState(stored);
+    } catch (err) {
+      console.error('Erro em saveLocalChange:', err);
+    }
   };
 
   // ------------------ FETCH USUÁRIOS ------------------
@@ -174,32 +254,47 @@ function App() {
   // ------------------ FETCH LEADS (com merge de localChanges) ------------------
   const applyLocalChangesToFetched = (fetchedLeads) => {
     const now = Date.now();
+    // curto-circuit: garante que localChanges estejam carregadas
+    loadLocalChangesFromStorage();
+
     const merged = fetchedLeads.map(lead => {
-      const key = Object.keys(localChangesRef.current).find(k => {
+      const matchedChangeKey = Object.keys(localChangesRef.current).find(k => {
         const ch = localChangesRef.current[k];
         if (!ch) return false;
-        if (String(ch.id) === String(lead.id) || (ch.data && String(ch.data.id) === String(lead.id))) return true;
-        if (ch.data && ch.data.phone && String(ch.data.phone) === String(lead.phone)) return true;
-        return false;
+
+        // Match por vários campos possíveis
+        const leadIdMatches = (ch.leadId && String(ch.leadId) === String(lead.id)) ||
+                              (ch.leadId && String(ch.leadId) === String(lead.ID)) ||
+                              (ch.id && String(ch.id) === String(lead.id)) ||
+                              (ch.data && (String(ch.data.id) === String(lead.id) || String(ch.data.ID) === String(lead.id) || String(ch.data.leadId) === String(lead.id)));
+
+        const phoneMatches = ch.data && ch.data.phone && String(ch.data.phone) === String(lead.phone);
+
+        return (leadIdMatches || phoneMatches);
       });
 
-      if (key) {
-        const change = localChangesRef.current[key];
+      if (matchedChangeKey) {
+        const change = localChangesRef.current[matchedChangeKey];
+        if (!change) return lead;
+        // Aplicar somente se estiver dentro do período de "hold" (5 minutos)
         if (now - change.timestamp < SYNC_DELAY_MS) {
-          return { ...lead, ...change.data };
+          // Mesclar de forma conservadora: priorizar campos do change.data sobre o lead
+          return { ...lead, ...(change.data || {}) };
         }
       }
+
       return lead;
     });
 
-    // Também adicionar leads que existem apenas nas localChanges (novo lead local)
+    // Adiciona leads que existem apenas nas localChanges (novos locais) se ainda estiverem no período de hold
     Object.keys(localChangesRef.current).forEach(k => {
       const change = localChangesRef.current[k];
       if (!change) return;
       if (Date.now() - change.timestamp < SYNC_DELAY_MS) {
-        const exists = merged.some(l => String(l.id) === String(change.id) || (change.data && String(l.phone) === String(change.data.phone)));
+        // se change representa um novo lead (ex.: type 'criarLead' ou não tem leadId que bata com fetched)
+        const exists = merged.some(l => String(l.id) === String(change.leadId) || (change.data && String(l.phone) === String(change.data.phone)));
         if (!exists) {
-          merged.unshift({ id: change.id, ...change.data });
+          merged.unshift({ id: change.leadId || change.id, ...(change.data || {}) });
         }
       }
     });
@@ -363,6 +458,13 @@ function App() {
         lead.phone === phone ? { ...lead, status: novoStatus, confirmado: true } : lead
       )
     );
+
+    // Salva localmente para sincronizar depois (mantenha o estado local)
+    saveLocalChange({
+      id: id,
+      type: 'atualizarStatus',
+      data: { leadId: id, status: novoStatus, phone: phone || null }
+    });
 
     if (novoStatus === 'Fechado') {
       setLeadsFechados((prev) => {
