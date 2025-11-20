@@ -28,12 +28,18 @@ function ScrollToTop({ scrollContainerRef }) {
   return null;
 }
 
-const GOOGLE_APPS_SCRIPT_BASE_URL = '/api/gas';
+const GOOGLE_APPS_SCRIPT_BASE_URL = 'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec';
 const GOOGLE_SHEETS_SCRIPT_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=getLeads`;
 const GOOGLE_SHEETS_LEADS_FECHADOS = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=pegar_clientes_fechados`;
 const GOOGLE_SHEETS_USERS_AUTH_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?v=pegar_usuario`;
 const SALVAR_AGENDAMENTO_SCRIPT_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}?action=salvarAgendamento`;
 const SALVAR_OBSERVACAO_SCRIPT_URL = `${GOOGLE_APPS_SCRIPT_BASE_URL}`;
+
+// ======= CONFIGURAÇÃO DE SINCRONIZAÇÃO LOCAL =======
+const LOCAL_CHANGES_KEY = 'leads_local_changes_v1';
+const SYNC_DELAY_MS = 5 * 60 * 1000; // 5 minutos
+const SYNC_CHECK_INTERVAL_MS = 1000; // checa a cada 1s
+// =====================================================
 
 function App() {
   const navigate = useNavigate();
@@ -414,6 +420,7 @@ function App() {
     try {
       await fetch(SALVAR_AGENDAMENTO_SCRIPT_URL, {
         method: 'POST',
+        mode: 'no-cors',
         body: JSON.stringify({
           leadId: leadId,
           dataAgendada: dataAgendada,
@@ -487,6 +494,7 @@ function App() {
     try {
       fetch(GOOGLE_APPS_SCRIPT_BASE_URL, {
         method: 'POST',
+        mode: 'no-cors',
         body: JSON.stringify({
           v: 'alterar_seguradora',
           lead: lead
@@ -595,92 +603,62 @@ function App() {
   };
 
   // ------------------ SYNC WORKER: envia alterações após expirarem ------------------
-  // Constantes fornecidas
-  const LOCAL_CHANGES_KEY = 'leads_local_changes_v1';
-  const SYNC_DELAY_MS = 5 * 60 * 1000; // 5 minutos
-  // const SYNC_CHECK_INTERVAL_MS = 1000; // Não é necessário para essa lógica
+  useEffect(() => {
+    // carrega alterações ao montar
+    loadLocalChangesFromStorage();
 
-  // Variável para armazenar o ID do timer (necessário para limpar/resetar)
-  let syncTimerId = null; 
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      const dueKeys = [];
+      const keys = Object.keys(localChangesRef.current);
 
-  // Variável de estado para saber se a sincronização está pendente/agendada
-  let isSyncScheduled = false;
-
-  // Função simulada que salva a alteração no Local Storage
-  function saveLocalChanges(data) {
-      // 1. Salva as alterações no Local Storage
-      console.log(`[${new Date().toLocaleTimeString()}] Alteração detectada e salva localmente.`);
-      
-      // Simulação: Adiciona o novo dado à lista de alterações pendentes
-      let changes = JSON.parse(localStorage.getItem(LOCAL_CHANGES_KEY) || '[]');
-      changes.push(data);
-      localStorage.setItem(LOCAL_CHANGES_KEY, JSON.stringify(changes));
-
-      // 2. Agenda a sincronização se ainda não estiver agendada
-      if (!isSyncScheduled) {
-          scheduleSync();
+      for (const k of keys) {
+        const change = localChangesRef.current[k];
+        if (!change) continue;
+        if (now - change.timestamp >= SYNC_DELAY_MS) {
+          dueKeys.push(k);
+        }
       }
-  }
 
-  // Função que agenda o início do timer de 5 minutos
-  function scheduleSync() {
-      isSyncScheduled = true;
-      console.log(`[${new Date().toLocaleTimeString()}] Sincronização agendada para daqui a 5 minutos (sem resetar!).`);
-      
-      // Define o timer de 5 minutos
-      syncTimerId = setTimeout(() => {
-          // Quando o tempo acabar, executa a sincronização
-          performSync();
-          
-          // Reseta o estado
-          isSyncScheduled = false;
-          syncTimerId = null;
-      }, SYNC_DELAY_MS);
-  }
+      if (dueKeys.length === 0) return;
 
-  // Função que realiza a sincronização real com o servidor/Sheets
-  function performSync() {
-      console.log('----------------------------------------------------');
-      console.log(`[${new Date().toLocaleTimeString()}] 🚀 SINCRONIZAÇÃO INICIADA!`);
-      
-      // Pega todos os dados locais
-      const changesToSync = localStorage.getItem(LOCAL_CHANGES_KEY);
-      
-      // ⚠️ Lógica real de API/FETCH/AJAX para enviar 'changesToSync' para o Sheets
-      // ...
-      // ...
-      
-      // Simulação de sucesso
-      console.log('Dados sincronizados com sucesso.');
-      
-      // 3. Limpa as alterações locais após o sucesso da sincronização
-      localStorage.removeItem(LOCAL_CHANGES_KEY);
-      console.log('Local Storage limpo.');
-      console.log('----------------------------------------------------');
-  }
+      // Processa cada alteração vencida (envia POST genérico; você pode customizar por tipo)
+      for (const key of dueKeys) {
+        const change = localChangesRef.current[key];
+        if (!change) continue;
 
+        try {
+          // Envio genérico: action=change.type, data=change.data
+          await fetch(GOOGLE_APPS_SCRIPT_BASE_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              action: change.type,
+              data: change.data,
+            }),
+          });
 
-  // -------------------------------------------------------------------
-  // EXEMPLO DE USO PARA TESTE
-  // (Execute estas chamadas no console do seu navegador)
-  // -------------------------------------------------------------------
+          // Após envio, removemos a alteração local
+          delete localChangesRef.current[key];
+          persistLocalChangesToStorage();
 
-  // 1. Primeira alteração (Agenda a sync para 5 minutos)
-  // saveLocalChanges({ id: 1, field: 'name', value: 'Novo Nome A' });
+          // Forçar um fetch para garantir que o estado servidor seja refletido
+          setTimeout(() => {
+            fetchLeadsFromSheet();
+            fetchLeadsFechadosFromSheet();
+          }, 800);
+        } catch (err) {
+          console.error('Erro ao sincronizar alteração local:', err);
+          // Em caso de erro, mantemos a alteração para tentar de novo posteriormente
+        }
+      }
+    }, SYNC_CHECK_INTERVAL_MS);
 
-  // 2. Segunda alteração 10 segundos depois (Não reseta o timer, apenas salva localmente)
-  // setTimeout(() => {
-  //     saveLocalChanges({ id: 2, field: 'email', value: 'email@teste.com' });
-  // }, 10000);
-
-  // 3. Terceira alteração 60 segundos depois (Também não reseta o timer)
-  // setTimeout(() => {
-  //     saveLocalChanges({ id: 3, field: 'status', value: 'Concluído' });
-  // }, 60000);
-
-  // Para testar rapidamente, mude SYNC_DELAY_MS para 5000 (5 segundos)
-  // const SYNC_DELAY_MS = 5000;
-  // -------------------------------------------------------------------
+    return () => clearInterval(interval);
+  }, []);
 
   const formatarDataParaDDMMYYYY = (dataString) => {
     if (!dataString) return '';
@@ -739,6 +717,7 @@ function App() {
       try {
         await fetch(`${GOOGLE_APPS_SCRIPT_BASE_URL}?action=syncAll`, {
           method: 'POST',
+          mode: 'no-cors',
           headers: {
             'Content-Type': 'application/json',
           },
