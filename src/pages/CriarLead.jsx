@@ -109,39 +109,20 @@ const CriarLead = () => {
   };
 
   const criarLeadFunc = async (lead) => {
-    try {
-      // O parâmetro 'v' agora é 'criar_lead' para corresponder ao seu script GAS
-      const response = await fetch(`${GOOGLE_SHEETS_BASE_URL}?v=criar_lead`, { 
-        method: 'POST',
-        mode: 'no-cors', // Mantido 'no-cors' conforme sua solicitação.
-                         // ATENÇÃO: No modo 'no-cors', o JavaScript não consegue ler a resposta do servidor.
-                         // Isso significa que a mensagem de sucesso no frontend é baseada na *tentativa* de envio,
-                         // e não na confirmação real do GAS. Para uma confirmação real, o GAS precisaria permitir CORS
-                         // e você usaria `mode: 'cors'` aqui.
-        headers: {
-          // MUITO IMPORTANTE: Use 'text/plain;charset=utf-8' para que o GAS possa interpretar o JSON
-          'Content-Type': 'text/plain;charset=utf-8', 
-        },
-        body: JSON.stringify(lead),
-      });
+  try {
+    const docRef = await addDoc(collection(db, "leads"), {
+      ...lead,
+      criadoEm: serverTimestamp()
+    });
 
-      console.log('Requisição de criação de lead enviada (modo no-cors).');
-      console.log('É necessário verificar os logs de execução do Google Apps Script para confirmar o sucesso, pois a resposta não é lida aqui.');
+    console.log("Lead salvo no Firebase com ID:", docRef.id);
 
-      // No modo 'no-cors', response.ok sempre será true para requisições bem-sucedidas em nível de rede,
-      // mas não indica sucesso da aplicação no GAS.
-      // Se você mudar para 'cors', adicione:
-      // if (!response.ok) {
-      //   throw new Error(`Erro HTTP! status: ${response.status}`);
-      // }
-      // const result = await response.json(); // Se o GAS retornar JSON
-      // console.log('Resposta do GAS (se CORS permitido):', result);
+  } catch (error) {
+    console.error("Erro ao salvar lead no Firebase:", error);
+    throw error;
+  }
+};
 
-    } catch (error) {
-      console.error('Erro ao enviar lead para o Google Sheets:', error);
-      throw error; // Re-lança o erro para que handleCriar possa tratá-lo
-    }
-  };
 
   return (
     <div className="p-6 max-w-xl mx-auto bg-white rounded-xl shadow-md space-y-6">
