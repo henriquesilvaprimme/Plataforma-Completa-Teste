@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from './firebase';
+import { db } from '../firebase';
 import { Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp } from 'lucide-react';
 
 const Dashboard = ({ usuarioLogado }) => {
