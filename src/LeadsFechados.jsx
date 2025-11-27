@@ -315,7 +315,7 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         scrollToTop();
     };
 
-    // --- Novo: Listener em tempo real para leadsFechados no Firestore ---
+    // --- Listener em tempo real para leadsFechados no Firestore ---
     useEffect(() => {
         setIsLoading(true);
         try {
@@ -352,16 +352,24 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
 
     // --------------------------
     // VISIBILITY: apenas admin vê todos; usuário vê apenas os fechados atribuidos a ele
-    // (Lógica adaptada exatamente da parte de visibilidade do Leads.jsx)
+    // (Lógica adaptada para comparar Responsavel com o usuário logado — leitura de múltiplas chaves do localStorage)
     // --------------------------
     const getCurrentUserFromStorage = () => {
-        try {
-            const raw = localStorage.getItem('user');
-            if (!raw) return null;
-            return JSON.parse(raw);
-        } catch (e) {
-            return null;
+        // Tenta várias chaves comuns no localStorage: 'user', 'usuarioLogado', 'usuario'
+        const keysToTry = ['user', 'usuarioLogado', 'usuario'];
+        for (const k of keysToTry) {
+            try {
+                const raw = localStorage.getItem(k);
+                if (!raw) continue;
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') return parsed;
+            } catch (e) {
+                // não é JSON, tentar tratar como string simples (ex.: nome)
+                const raw = localStorage.getItem(k);
+                if (raw) return { nome: raw, usuario: raw };
+            }
         }
+        return null;
     };
 
     const canViewLead = (lead) => {
@@ -369,22 +377,41 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         const user = getCurrentUserFromStorage();
         if (!user) return false;
 
-        // user id values could be in different keys
-        const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
-        const userNome = String(user.nome ?? user.name ?? user.usuario ?? '').trim().toLowerCase();
+        // Normalize IDs and names for robust comparison
+        const userId = String(user.id ?? user.ID ?? user.userId ?? user.uid ?? '').trim();
+        const userNomeRaw = user.nome ?? user.name ?? user.usuario ?? user.user ?? '';
+        const userNome = normalizarTexto(String(userNomeRaw).trim());
 
         // lead.usuarioId can be number or string
         const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
         if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
 
-        // Compare responsavel / Responsavel names
-        const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '').trim().toLowerCase();
+        // Compare Responsavel / responsavel names using normalization (accent-insensitive, case-insensitive)
+        const leadResponsavelRaw = lead.responsavel ?? lead.Responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
+        const leadResponsavel = normalizarTexto(String(leadResponsavelRaw).trim());
         if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
 
         // Fallback: raw.usuario/login match
         const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
-        const userLogin = String(user.usuario ?? '').trim();
+        const userLogin = String(user.usuario ?? user.user ?? '').trim();
         if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+
+        // Also check if the usuarios prop contains the current user and the lead.Responsavel equals that name
+        try {
+            if ((!userNome || userNome === '') && Array.isArray(usuarios) && usuarios.length > 0) {
+                // tenta encontrar usuário logado pela comparação de login (usuario) em localStorage com usuarios prop
+                const possibleLogin = String(user.usuario ?? user.user ?? '').trim();
+                if (possibleLogin) {
+                    const found = usuarios.find(u => String(u.usuario) === possibleLogin || String(u.email) === possibleLogin || String(u.id) === possibleLogin);
+                    if (found) {
+                        const foundNome = normalizarTexto(String(found.nome ?? '').trim());
+                        if (foundNome && leadResponsavel === foundNome) return true;
+                    }
+                }
+            }
+        } catch (e) {
+            // ignore fallback errors
+        }
 
         return false;
     };
