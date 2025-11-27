@@ -1014,7 +1014,16 @@ function App() {
             path="/leads-fechados"
             element={
               <LeadsFechados
-                leads={isAdmin ? leadsFechados : leadsFechados.filter((lead) => String(lead.Responsavel) === String(usuarioLogado.nome))}
+                leads={
+                  isAdmin
+                    ? leadsFechados
+                    : leadsFechados.filter((lead) =>
+                        String(lead.responsavel) === String(usuarioLogado.nome) ||
+                        String(lead.Responsavel) === String(usuarioLogado.nome) ||
+                        String(lead.usuarioId) === String(usuarioLogado.id) ||
+                        String(lead.usuario) === String(usuarioLogado.usuario)
+                      )
+                }
                 usuarios={usuarios}
                 onUpdateInsurer={atualizarSeguradoraLead}
                 onConfirmInsurer={confirmarSeguradoraLead}
