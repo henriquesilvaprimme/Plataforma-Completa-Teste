@@ -576,21 +576,24 @@ function App() {
     VigenciaInicial: "",
   })
 
-  // FUNÇÃO ATUALIZADA COM NOVOS PARÂMETROS
+  // FUNÇÃO ATUALIZADA COM NOVOS PARÂMETROS E FALLBACK PARA DOC.ID DO FIRESTORE
   const confirmarSeguradoraLead = (id, premio, seguradora, comissao, parcelamento, vigenciaFinal, vigenciaInicial, meioPagamento, cartaoPortoNovo) => {
+    const ident = String(id);
+
     // Procura pelo lead usando ID, id ou phone (tolerante)
     const found = leadsFechados.find(l =>
-      String(l.ID) === String(id) || String(l.id) === String(id) || String(l.phone) === String(id)
+      String(l.ID) === ident || String(l.id) === ident || String(l.phone) === ident
     );
 
     if (!found) {
-      console.warn(`Aviso: Lead com identificador ${id} não encontrado por ID/id/phone. Tentando atualizar por igualdade flexível.`);
+      console.warn(`Aviso: Lead com identificador ${ident} não encontrado por ID/id/phone. Tentando criar/atualizar placeholder em leadsFechados usando o identificador recebido.`);
     }
 
     // Atualiza estado localmente sempre que possível (mapeia por várias chaves)
     setLeadsFechados((prev) => {
-      const atualizados = prev.map((l) => {
-        if (String(l.ID) === String(id) || String(l.id) === String(id) || String(l.phone) === String(id)) {
+      // Se já existe, atualiza
+      let updated = prev.map((l) => {
+        if (String(l.ID) === ident || String(l.id) === ident || String(l.phone) === ident) {
           return {
             ...l,
             insurerConfirmed: true,
@@ -607,12 +610,37 @@ function App() {
         return l;
       });
 
-      return atualizados;
+      // Se não encontrou, adiciona um placeholder (upsert) para compatibilidade com doc.id do Firestore
+      const existsNow = updated.some(l => String(l.ID) === ident || String(l.id) === ident || String(l.phone) === ident);
+      if (!existsNow) {
+        const placeholder = normalizeLead({
+          ID: ident,
+          id: ident,
+          name: '',
+          phone: '',
+          Data: new Date().toISOString(),
+          Responsavel: usuarioLogado?.nome ?? '',
+          Status: 'Fechado',
+          Seguradora: seguradora || '',
+          PremioLiquido: premio || '',
+          Comissao: comissao || '',
+          Parcelamento: parcelamento || '',
+          VigenciaInicial: vigenciaInicial || '',
+          VigenciaFinal: vigenciaFinal || '',
+          MeioPagamento: meioPagamento || '',
+          CartaoPortoNovo: cartaoPortoNovo || '',
+          confirmed: true,
+          insurerConfirmed: true
+        });
+        updated = [...updated, placeholder];
+      }
+
+      return updated;
     });
 
-    // Enfileira alteração localmente (mesmo que o lead não tenha sido localizado, para sincronizar com planilha/serviço)
+    // Enfileira alteração localmente (mesmo que o lead não tenha sido localizado, para sincronizar posteriormente)
     try {
-      const changeId = id ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
+      const changeId = ident ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
       const dataToSave = {
         id: changeId,
         ID: changeId,
