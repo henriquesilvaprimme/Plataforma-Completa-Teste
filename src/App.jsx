@@ -1,3 +1,4 @@
+// src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 
@@ -116,10 +117,9 @@ function App() {
           rawDocumentId = String(v);
         }
       }
-      // detecta chaves curtas como 'docid' ou 'docId'
       if (!rawDocumentId) {
         const ck = String(k).toLowerCase();
-        if (ck === 'docid' || ck === 'docid' || ck === 'doc_id' || ck === 'documentid') {
+        if (ck === 'docid' || ck === 'doc_id' || ck === 'documentid') {
           const v = item[k];
           if (v !== undefined && v !== null && String(v).trim() !== '') {
             rawDocumentId = String(v);
@@ -128,7 +128,6 @@ function App() {
       }
     });
 
-    // fallback para propriedades específicas
     if (!rawDocumentId) {
       rawDocumentId = item.documentId ?? item.docId ?? item.DocumentId ?? item.DocumentID ?? item['Document ID'] ?? null;
     }
@@ -138,12 +137,10 @@ function App() {
     const statusRaw = item.status ?? item.Status ?? item.stato ?? '';
     const status = (typeof statusRaw === 'string' && statusRaw.trim() !== '') ? statusRaw : (item.confirmado ? 'Em Contato' : 'Selecione o status');
 
-    // garante que tanto id quanto ID existam e sejam strings (consistência)
     return {
       id: String(item.id ?? item.ID ?? derivedId),
       ID: String(item.ID ?? item.id ?? derivedId),
-      documentId: documentId, // novo campo consistente para Document ID
-      // mantém 'Document ID' bruto se existir (algumas planilhas têm a coluna literal)
+      documentId: documentId,
       'Document ID': item['Document ID'] ?? (documentId ? documentId : undefined),
       name: item.name ?? item.Name ?? item.nome ?? '',
       nome: item.nome ?? item.name ?? item.Name ?? '',
@@ -170,7 +167,6 @@ function App() {
       agendados: item.agendados ?? false,
       MeioPagamento: item.MeioPagamento ?? '',
       CartaoPortoNovo: item.CartaoPortoNovo ?? '',
-      // preserva quaisquer outros campos
       ...item,
     };
   };
@@ -204,7 +200,6 @@ function App() {
       setLeads(prev => {
         if (!prev || prev.length === 0) return prev;
         const updated = prev.map(l => {
-          // tentar casar por id numérico ou string ou phone ou documentId
           if (leadMatchesIdent(l, leadId) || (data.phone && norm(data.phone) === norm(l.phone))) {
             let copy = { ...l };
             if (type === 'alterarAtribuido') {
@@ -224,7 +219,6 @@ function App() {
             } else if (type === 'salvarAgendamento') {
               copy.agendamento = data.dataAgendada ?? copy.agendamento;
             } else if (type === 'alterar_seguradora') {
-              // manter consistência dos campos
               copy = { ...copy, ...data };
             }
             return copy;
@@ -319,7 +313,7 @@ function App() {
       if (partesHifen) {
         dateObj = new Date(dataString + 'T00:00:00');
       } else if (partesBarra) {
-        dateObj = new Date(`${partesBarra[3]}-${partesBarra[2]}-${partesBarra[1]}T00:00:00`);
+        dateObj = new Date(`${partesBarra[3]}-${partesBar[2]}-${partesBar[1]}T00:00:00`);
       } else {
         dateObj = new Date(dataString);
       }
@@ -344,13 +338,17 @@ function App() {
     }
   };
 
-  // ------------------ FIRESTORE: listeners para leads e leadsFechados ------------------
+  // ------------------ FIRESTORE: listeners para leads ------------------
   useEffect(() => {
-    // Listener para 'leads' (abertos)
+    // Listener para 'leads' (abertos e atualizações)
     try {
       const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
       const unsubLeads = onSnapshot(qLeads, (snapshot) => {
-        const arr = snapshot.docs.map(d => normalizeLead({ id: d.id, ...(d.data() || {}) }));
+        const arr = snapshot.docs.map(d => {
+          // construímos um objeto similar ao que normalizeLead espera
+          const raw = { id: d.id, ...(d.data() || {}) };
+          return normalizeLead(raw);
+        });
         setLeads(arr);
       }, (err) => {
         console.error('Erro no listener leads:', err);
@@ -364,24 +362,25 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    // Listener para 'leadsFechados'
-    try {
-      const qFechados = query(collection(db, 'leadsFechados'), orderBy('closedAt', 'desc'));
-      const unsubFechados = onSnapshot(qFechados, (snapshot) => {
-        const arr = snapshot.docs.map(d => normalizeLead({ id: d.id, ...(d.data() || {}) }));
-        setLeadsFechados(arr);
-      }, (err) => {
-        console.error('Erro no listener leadsFechados:', err);
-      });
+  // OBS: removemos listener direto na coleção 'leadsFechados'.
+  // Em vez disso, derivamos leadsFechados a partir de 'leads' (coleção única) filtrando insurerConfirmed === true.
 
-      return () => {
-        try { unsubFechados(); } catch (e) { /* ignore */ }
-      };
-    } catch (e) {
-      console.error('Erro iniciando listener leadsFechados:', e);
+  // Sempre que 'leads' mudar, atualiza 'leadsFechados' filtrando por insurerConfirmed === true
+  useEffect(() => {
+    try {
+      const fechados = (leads || []).filter((l) => l.insurerConfirmed === true);
+      // Ordena por closedAt (se disponível) ou por createdAt
+      fechados.sort((a, b) => {
+        const ta = a.closedAt ? (a.closedAt.seconds ? a.closedAt.seconds * 1000 : new Date(a.closedAt).getTime()) : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const tb = b.closedAt ? (b.closedAt.seconds ? b.closedAt.seconds * 1000 : new Date(b.closedAt).getTime()) : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return tb - ta;
+      });
+      setLeadsFechados(fechados);
+    } catch (err) {
+      console.error('Erro ao derivar leadsFechados a partir de leads:', err);
+      setLeadsFechados([]);
     }
-  }, []);
+  }, [leads]);
 
   // Também expomos fetchers pontuais (getDocs) caso algum componente queira forçar refresh manual
   const fetchLeadsFromFirebase = async () => {
@@ -395,13 +394,21 @@ function App() {
     }
   };
 
+  // Atualizado: busca em 'leads' e filtra insurerConfirmed === true
   const fetchLeadsFechadosFromFirebase = async () => {
     try {
-      const snap = await getDocs(query(collection(db, 'leadsFechados'), orderBy('closedAt', 'desc')));
+      const snap = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
       const arr = snap.docs.map(d => normalizeLead({ id: d.id, ...(d.data() || {}) }));
-      setLeadsFechados(arr);
+      const fechados = arr.filter(l => l.insurerConfirmed === true);
+      // ordena por closedAt se houver
+      fechados.sort((a, b) => {
+        const ta = a.closedAt ? (a.closedAt.seconds ? a.closedAt.seconds * 1000 : new Date(a.closedAt).getTime()) : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const tb = b.closedAt ? (b.closedAt.seconds ? b.closedAt.seconds * 1000 : new Date(b.closedAt).getTime()) : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return tb - ta;
+      });
+      setLeadsFechados(fechados);
     } catch (err) {
-      console.error('Erro ao buscar leadsFechados do Firebase:', err);
+      console.error('Erro ao buscar leadsFechados (via leads) do Firebase:', err);
       setLeadsFechados([]);
     }
   };
@@ -558,13 +565,12 @@ function App() {
     comissao: "",
     VigenciaFinal: "",
     VigenciaInicial: "",
-  })
+  });
 
-  // FUNÇÃO ATUALIZADA COM SUPORTE A Document ID (doc.id do Firestore) E LOGS PARA DEBUG
+  // FUNÇÃO confirmarSeguradoraLead (mantida) - atualiza leadsFechados local e salva change local
   const confirmarSeguradoraLead = (id, premio, seguradora, comissao, parcelamento, vigenciaFinal, vigenciaInicial, meioPagamento, cartaoPortoNovo) => {
     const ident = String(id);
 
-    // LOG TEMPORÁRIO: para debug (mostra ident recebido e lista reduzida de ids em leadsFechados)
     try {
       console.debug('[confirmarSeguradoraLead] ident recebido:', ident);
       console.debug('[confirmarSeguradoraLead] leadsFechados snapshot (ID,id,documentId):', leadsFechados.map(l => ({
@@ -577,16 +583,13 @@ function App() {
       // ignore
     }
 
-    // Procura pelo lead usando ID, id, phone ou documentId (tolerante)
     const found = leadsFechados.find(l => leadMatchesIdent(l, ident));
 
     if (!found) {
       console.warn(`Aviso: Lead com identificador ${ident} não encontrado por ID/id/phone/documentId. Irei criar um placeholder em leadsFechados.`);
     }
 
-    // Atualiza estado localmente sempre que possível (mapeia por várias chaves)
     setLeadsFechados((prev) => {
-      // Se já existe, atualiza
       let updated = prev.map((l) => {
         if (leadMatchesIdent(l, ident)) {
           return {
@@ -605,7 +608,6 @@ function App() {
         return l;
       });
 
-      // Se não encontrou, adiciona um placeholder (upsert) para compatibilidade com doc.id do Firestore
       const existsNow = updated.some(l => leadMatchesIdent(l, ident));
       if (!existsNow) {
         const placeholder = normalizeLead({
@@ -636,7 +638,6 @@ function App() {
       return updated;
     });
 
-    // Enfileira alteração localmente (mesmo que o lead não tenha sido localizado, para persistência local)
     try {
       const changeId = ident ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
       const dataToSave = {
@@ -772,7 +773,6 @@ function App() {
 
   // ===================== FUNÇÃO: não força sincronização com Sheets (removido) =====================
   const forceSyncWithSheets = async () => {
-    // removido: sincronização com Google Sheets
     console.log('Sincronização com Google Sheets removida. As alterações são persistidas localmente apenas.');
   };
   // =============================================================================
@@ -862,7 +862,7 @@ function App() {
                 leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))}
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // renamed but usable by children
+                fetchLeadsFromSheet={fetchLeadsFromFirebase}
                 transferirLead={transferirLead}
                 usuarioLogado={usuarioLogado}
                 leadSelecionado={leadSelecionado}
@@ -893,7 +893,7 @@ function App() {
                 onUpdateInsurer={atualizarSeguradoraLead}
                 onConfirmInsurer={confirmarSeguradoraLead}
                 onUpdateDetalhes={atualizarDetalhesLeadFechado}
-                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // renamed but usable
+                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
                 isAdmin={isAdmin}
                 ultimoFechadoId={ultimoFechadoId}
                 onAbrirLead={onAbrirLead}
