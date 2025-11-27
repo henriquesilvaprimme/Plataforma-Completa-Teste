@@ -121,26 +121,68 @@ const Leads = ({
   // Função para mover lead para leadsFechados e marcar o original como closed
   const moveLeadToClosed = async (leadId, leadData = {}) => {
     try {
-      // Agora o payload contém apenas os campos já preenchidos pelo lead
-      // e deixa em branco os campos que serão preenchidos no LeadsFechados.jsx
+      // Construir payload contendo apenas os campos preenchidos solicitados
+      // e deixando vazios os campos que serão preenchidos no LeadsFechados.jsx
+      const nomeVal =
+        leadData.name ??
+        leadData.nome ??
+        leadData.Nome ??
+        leadData.Name ??
+        '';
+
+      const vehicleModelVal =
+        leadData.vehicleModel ??
+        leadData.modelo ??
+        leadData.Modelo ??
+        '';
+
+      const vehicleYearVal =
+        leadData.vehicleYearModel ??
+        leadData.anoModelo ??
+        leadData.AnoModelo ??
+        leadData.ano ??
+        '';
+
+      const cityVal =
+        leadData.city ??
+        leadData.Cidade ??
+        leadData.cidade ??
+        '';
+
+      const phoneVal =
+        leadData.phone ??
+        leadData.Telefone ??
+        leadData.telefone ??
+        leadData.phoneNumber ??
+        '';
+
+      const insuranceTypeVal =
+        leadData.insuranceType ??
+        leadData.tipoSeguro ??
+        leadData.TipoSeguro ??
+        '';
+
       const payload = {
         // IDs / nomes
         ID: leadData.ID ?? leadData.id ?? String(leadId),
         id: String(leadId),
-        name: leadData.name ?? leadData.nome ?? leadData.Nome ?? leadData.Name ?? '',
-        Name: leadData.Name ?? leadData.name ?? leadData.nome ?? '',
-        // Campos do lead preenchidos: modelo, ano/modelo, cidade, telefone, tipo de seguro
-        Modelo: leadData.vehicleModel ?? leadData.Modelo ?? '',
-        vehicleModel: leadData.vehicleModel ?? leadData.Modelo ?? '',
-        AnoModelo: leadData.vehicleYearModel ?? leadData.AnoModelo ?? leadData.anoModelo ?? '',
-        vehicleYearModel: leadData.vehicleYearModel ?? leadData.AnoModelo ?? leadData.anoModelo ?? '',
-        Cidade: leadData.city ?? leadData.Cidade ?? leadData.cidade ?? '',
-        city: leadData.city ?? leadData.Cidade ?? leadData.cidade ?? '',
-        Telefone: leadData.phone ?? leadData.Telefone ?? leadData.telefone ?? '',
-        phone: leadData.phone ?? leadData.Telefone ?? leadData.telefone ?? '',
-        TipoSeguro: leadData.insuranceType ?? leadData.TipoSeguro ?? leadData.tipoSeguro ?? '',
-        insuranceType: leadData.insuranceType ?? leadData.TipoSeguro ?? leadData.tipoSeguro ?? '',
-        // Campos de venda que devem ficar vazios para serem preenchidos em LeadsFechados.jsx
+        // Nome
+        Nome: nomeVal,
+        name: nomeVal,
+        Name: nomeVal,
+        // Modelo / Ano
+        Modelo: vehicleModelVal,
+        vehicleModel: vehicleModelVal,
+        AnoModelo: vehicleYearVal,
+        vehicleYearModel: vehicleYearVal,
+        // Cidade / Telefone / TipoSeguro
+        Cidade: cityVal,
+        city: cityVal,
+        Telefone: phoneVal,
+        phone: phoneVal,
+        TipoSeguro: insuranceTypeVal,
+        insuranceType: insuranceTypeVal,
+        // Campos de venda — deixamos vazios intencionalmente
         Seguradora: '',
         insurer: '',
         MeioPagamento: '',
@@ -150,24 +192,20 @@ const Leads = ({
         Parcelamento: '',
         VigenciaInicial: '',
         VigenciaFinal: '',
-        // Outros campos úteis a manter
+        // Status/Observação/Responsável mínimos
         Status: leadData.status ?? leadData.Status ?? 'Fechado',
         Observacao: leadData.observacao ?? leadData.Observacao ?? '',
         Responsavel: leadData.responsavel ?? leadData.Responsavel ?? '',
-        usuarioId: leadData.usuarioId ?? leadData.usuarioId ?? null,
+        usuarioId: leadData.usuarioId ?? null,
+        // Data/metadata
         Data: leadData.Data ?? formatDDMMYYYYFromISO(leadData.createdAt) ?? '',
         createdAt: leadData.createdAt ?? null,
         closedAt: serverTimestamp(),
-        // opcional: manter raw se quiser referência (aqui manter breve)
-        raw: {
-          ID: leadData.ID ?? leadData.id ?? String(leadId),
-          originalStatus: leadData.status ?? leadData.Status ?? '',
-        },
       };
 
-      // Salva no leadsFechados com o mesmo ID (facilita rastreabilidade)
+      // Escreve o documento em leadsFechados (substitui conteúdo do doc para garantir os campos)
       const closedRef = doc(db, 'leadsFechados', String(leadId));
-      await setDoc(closedRef, payload, { merge: true });
+      await setDoc(closedRef, payload); // sem merge para garantir que vendas fiquem vazias
 
       // Marca o lead original como fechado em vez de deletar
       const originalRef = doc(db, 'leads', String(leadId));
@@ -175,11 +213,10 @@ const Leads = ({
         closed: true,
         closedAt: serverTimestamp(),
         status: payload.Status ?? 'Fechado',
-        // opcional: preserve observação/agendamento já atualizados
       };
       await updateDoc(originalRef, updatePayload);
 
-      console.log(`Lead ${leadId} copiado para leadsFechados e marcado como closed no leads.`);
+      console.log(`Lead ${leadId} copiado para leadsFechados (campos base) e marcado como closed no leads.`);
     } catch (err) {
       console.error('Erro ao mover/marcar lead como fechado:', err);
       // Não lançar para não interromper o fluxo do usuário
@@ -203,7 +240,6 @@ const Leads = ({
             return dbb - da;
           });
 
-          // console.log('onSnapshot leads:', lista); // descomente para debugar
           setLeadsData(lista);
 
           // Atualiza observações e flags imediatamente para refletir mudanças do formulário
@@ -923,7 +959,7 @@ const Leads = ({
               <button
                 onClick={handlePaginaProxima}
                 disabled={paginaCorrigida >= totalPaginas || isLoading}
-                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
+                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duração-150 shadow-md ${
                   (paginaCorrigida >= totalPaginas || isLoading)
                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                     : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
