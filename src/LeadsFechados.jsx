@@ -1,829 +1,1409 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { RefreshCcw, Search, CheckCircle, DollarSign, Calendar } from 'lucide-react';
-import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { db } from './firebase';
+import React, { useState, useEffect, useMemo } from 'react';
+import Lead from './components/Lead';
+import { RefreshCcw, Bell, Search } from 'lucide-react';
+import {
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  onSnapshot,
+  setDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { db } from './firebase'; // ajuste o caminho se necessário
 
-const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, fetchLeadsFechadosFromSheet, isAdmin, scrollContainerRef }) => {
-    const [fechadosFiltradosInterno, setFechadosFiltradosInterno] = useState([]);
-    const [paginaAtual, setPaginaAtual] = useState(1);
-    const leadsPorPagina = 10;
+const Leads = ({
+  usuarios,
+  onUpdateStatus,
+  transferirLead,
+  usuarioLogado,
+  scrollContainerRef,
+  saveLocalChange,
+}) => {
+  const [leadsData, setLeadsData] = useState([]);
+  const [selecionados, setSelecionados] = useState({});
+  const [paginaAtual, setPaginaAtual] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [observacoes, setObservacoes] = useState({});
+  const [isEditingObservacao, setIsEditingObservacao] = useState({});
+  const [dataInput, setDataInput] = useState('');
+  const [filtroData, setFiltroData] = useState('');
+  const [nomeInput, setNomeInput] = useState('');
+  const [filtroNome, setFiltroNome] = useState('');
+  const [filtroStatus, setFiltroStatus] = useState(null);
+  const [showNotification, setShowNotification] = useState(false);
+  const [hasScheduledToday, setHasScheduledToday] = useState(false);
 
-    const [valores, setValores] = useState({});
-    const [vigencia, setVigencia] = useState({});
-    const [isLoading, setIsLoading] = useState(false);
-    const [nomeInput, setNomeInput] = useState('');
-    const [nomeTemporario, setNomeTemporario] = useState({});
-    const [leadsFromFirebase, setLeadsFromFirebase] = useState([]);
+  // NOVOS STATES: modal de fechamento
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
+  const [closingLead, setClosingLead] = useState(null);
 
-    const getMesAnoAtual = () => {
-        const hoje = new Date();
-        const ano = hoje.getFullYear();
-        const mes = String(hoje.getMonth() + 1).padStart(2, '0');
-        return `${ano}-${mes}`;
-    };
-    const [dataInput, setDataInput] = useState(getMesAnoAtual());
-    const [filtroNome, setFiltroNome] = useState('');
-    const [filtroData, setFiltroData] = useState(getMesAnoAtual());
-    const [premioLiquidoInputDisplay, setPremioLiquidoInputDisplay] = useState({});
+  // campos do modal
+  const [modalNome, setModalNome] = useState('');
+  const [modalSeguradora, setModalSeguradora] = useState('');
+  const [modalMeioPagamento, setModalMeioPagamento] = useState('');
+  const [modalCartaoPortoNovo, setModalCartaoPortoNovo] = useState('Não'); // 'Sim' | 'Não'
+  const [modalPremioLiquido, setModalPremioLiquido] = useState('');
+  const [modalComissao, setModalComissao] = useState('');
+  const [modalParcelamento, setModalParcelamento] = useState('1');
+  const [modalVigenciaInicial, setModalVigenciaInicial] = useState('');
+  const [modalVigenciaFinal, setModalVigenciaFinal] = useState('');
+  const [isSubmittingClose, setIsSubmittingClose] = useState(false);
 
-    const getDataParaComparacao = (dataStr) => {
-        if (!dataStr && dataStr !== 0) return '';
-        if (typeof dataStr === 'object' && dataStr !== null && typeof dataStr.toDate === 'function') {
-            const d = dataStr.toDate();
-            if (!isNaN(d.getTime())) {
-                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            }
-        }
-        dataStr = String(dataStr).trim();
-        const parts = dataStr.split('/');
-        if (parts.length === 3) {
-            const [dia, mes, ano] = parts;
-            if (!isNaN(parseInt(dia)) && !isNaN(parseInt(mes)) && !isNaN(parseInt(ano))) {
-                return `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
-            }
-        }
-        if (/^\d{4}-\d{2}-\d{2}$/.test(dataStr)) return dataStr;
-        const maybeDate = new Date(dataStr);
-        if (!isNaN(maybeDate.getTime())) {
-            return `${maybeDate.getFullYear()}-${String(maybeDate.getMonth() + 1).padStart(2, '0')}-${String(maybeDate.getDate()).padStart(2, '0')}`;
-        }
+  // Normaliza um documento do Firestore para o formato esperado pelo React
+  const normalizeLead = (docId, data = {}) => {
+    const safe = (v) => (v === undefined || v === null ? '' : v);
+
+    const toISO = (v) => {
+      if (!v && v !== 0) return '';
+      if (typeof v === 'object' && typeof v.toDate === 'function') {
+        return v.toDate().toISOString();
+      }
+      if (typeof v === 'string') return v;
+      try {
+        return new Date(v).toISOString();
+      } catch {
         return '';
+      }
     };
 
-    const normalizarTexto = (texto = '') => {
-        return texto
-            .toString()
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()@\+\?><\[\]\+]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    };
+    // Nome
+    const nomeVal =
+      safe(data.Nome) ||
+      safe(data.nome) ||
+      safe(data.Name) ||
+      safe(data.name) ||
+      safe(data['Nome Completo']) ||
+      '';
 
-    const nomeContemFiltro = (leadNome, filtroNome) => {
-        if (!filtroNome) return true;
-        if (!leadNome) return false;
-        const nomeNormalizado = normalizarTexto(leadNome);
-        const filtroNormalizado = normalizarTexto(filtroNome);
-        return nomeNormalizado.includes(filtroNormalizado);
-    };
+    // Modelo do veículo - mapeia várias variações possíveis de campo do formulário
+    const modeloVal =
+      safe(data.Modelo) ||
+      safe(data.modelo) ||
+      safe(data['Modelo do Veículo']) ||
+      safe(data['modelo do veículo']) ||
+      safe(data.modeloVeiculo) ||
+      safe(data.ModeloVeiculo) ||
+      safe(data.vehicleModel) ||
+      safe(data.vehicle_model) ||
+      safe(data.model) ||
+      '';
 
-    const scrollToTop = () => {
-        if (scrollContainerRef && scrollContainerRef.current) {
-            scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    // Ano / Modelo
+    const anoModeloVal =
+      safe(data.AnoModelo) ||
+      safe(data.anoModelo) ||
+      safe(data.Ano) ||
+      safe(data.ano) ||
+      safe(data.vehicleYearModel) ||
+      safe(data.vehicle_year) ||
+      '';
+
+    // Cidade
+    const cidadeVal =
+      safe(data.Cidade) || safe(data.cidade) || safe(data.city) || '';
+
+    // Telefone
+    const telefoneVal =
+      safe(data.Telefone) || safe(data.telefone) || safe(data.phone) || '';
+
+    // Tipo Seguro
+    const tipoSeguroVal =
+      safe(data.TipoSeguro) ||
+      safe(data.tipoSeguro) ||
+      safe(data.insuranceType) ||
+      safe(data.tipo_de_seguro) ||
+      '';
+
+    return {
+      id: String(docId),
+      ID: data.ID ?? data.id ?? docId,
+      Nome: nomeVal,
+      name: nomeVal,
+      Name: nomeVal,
+      // Mantemos ambos por compatibilidade, mas o campo principal para leadsFechados será "Modelo" (em pt)
+      Modelo: modeloVal,
+      vehicleModel: modeloVal,
+      AnoModelo: anoModeloVal,
+      vehicleYearModel: anoModeloVal,
+      Cidade: cidadeVal,
+      city: cidadeVal,
+      Telefone: telefoneVal,
+      phone: telefoneVal,
+      TipoSeguro: tipoSeguroVal,
+      insuranceType: tipoSeguroVal,
+      status: typeof data.status === 'string' ? data.status : data.Status ?? '',
+      confirmado:
+        data.confirmado === true || data.confirmado === 'true' ? true : false,
+      insurer: data.insurer ?? data.Seguradora ?? '',
+      insurerConfirmed:
+        data.insurerConfirmed === true || data.insurerConfirmed === 'true'
+          ? true
+          : false,
+      usuarioId:
+        data.usuarioId !== undefined && data.usuarioId !== null
+          ? Number(data.usuarioId)
+          : data.usuarioId ?? null,
+      premioLiquido: data.premioLiquido ?? data.PremioLiquido ?? '',
+      comissao: data.comissao ?? data.Comissao ?? '',
+      parcelamento: data.parcelamento ?? data.Parcelamento ?? '',
+      VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? '',
+      VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? '',
+      createdAt: toISO(data.createdAt ?? data.data ?? data.Data),
+      responsavel: data.responsavel ?? data.Responsavel ?? '',
+      editado: data.editado ?? '',
+      observacao: data.observacao ?? data.Observacao ?? '',
+      agendamento: data.agendamento ?? data.Agendamento ?? '',
+      agendados: data.agendados ?? false,
+      MeioPagamento: data.MeioPagamento ?? '',
+      CartaoPortoNovo: data.CartaoPortoNovo ?? '',
+      // Mantém demais campos brutos se houver necessidade
+      ...data,
+    };
+  };
+
+  // Formata ISO -> DD/MM/YYYY
+  const formatDDMMYYYYFromISO = (isoOrString) => {
+    if (!isoOrString) return '';
+    try {
+      if (typeof isoOrString === 'object' && typeof isoOrString.toDate === 'function') {
+        const d = isoOrString.toDate();
+        return d.toLocaleDateString('pt-BR');
+      }
+      const d = new Date(isoOrString);
+      if (isNaN(d.getTime())) return '';
+      const dia = String(d.getDate()).padStart(2, '0');
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const ano = d.getFullYear();
+      return `${dia}/${mes}/${ano}`;
+    } catch {
+      return '';
+    }
+  };
+
+  // Move lead para leadsFechados (mantive a função antiga caso queira usar)
+  const moveLeadToClosed = async (leadId, leadData = {}) => {
+    try {
+      const nomeVal =
+        leadData.Nome ??
+        leadData.nome ??
+        leadData.Name ??
+        leadData.name ??
+        '';
+
+      const modeloVal =
+        leadData.Modelo ??
+        leadData.modelo ??
+        leadData['Modelo do Veículo'] ??
+        leadData['modelo do veículo'] ??
+        leadData.modeloVeiculo ??
+        leadData.vehicleModel ??
+        leadData.model ??
+        '';
+
+      const anoModeloVal =
+        leadData.AnoModelo ??
+        leadData.anoModelo ??
+        leadData.Ano ??
+        leadData.ano ??
+        leadData.vehicleYearModel ??
+        '';
+
+      const cidadeVal =
+        leadData.Cidade ?? leadData.cidade ?? leadData.city ?? '';
+
+      const telefoneVal =
+        leadData.Telefone ?? leadData.telefone ?? leadData.phone ?? '';
+
+      const tipoSeguroVal =
+        leadData.TipoSeguro ??
+        leadData.tipoSeguro ??
+        leadData.insuranceType ??
+        '';
+
+      const payload = {
+        ID: leadData.ID ?? leadData.id ?? String(leadId),
+        id: String(leadId),
+        Nome: nomeVal,
+        Modelo: modeloVal,
+        AnoModelo: anoModeloVal,
+        Cidade: cidadeVal,
+        Telefone: telefoneVal,
+        TipoSeguro: tipoSeguroVal,
+        usuarioId: leadData.usuarioId ?? null,
+        Seguradora: '',
+        MeioPagamento: '',
+        CartaoPortoNovo: '',
+        PremioLiquido: '',
+        Comissao: '',
+        Parcelamento: '',
+        VigenciaInicial: '',
+        VigenciaFinal: '',
+        Status: leadData.status ?? leadData.Status ?? 'Fechado',
+        Observacao: leadData.observacao ?? leadData.Observacao ?? '',
+        Responsavel: leadData.responsavel ?? leadData.Responsavel ?? '',
+        Data: leadData.Data ?? formatDDMMYYYYFromISO(leadData.createdAt) ?? '',
+        createdAt: leadData.createdAt ?? null,
+        closedAt: serverTimestamp(),
+      };
+
+      const closedRef = doc(db, 'leadsFechados', String(leadId));
+      await setDoc(closedRef, payload);
+
+      const originalRef = doc(db, 'leads', String(leadId));
+      const updatePayload = {
+        closed: true,
+        closedAt: serverTimestamp(),
+        status: payload.Status ?? 'Fechado',
+      };
+      await updateDoc(originalRef, updatePayload);
+
+      console.log(
+        `Lead ${leadId} copiado para leadsFechados (via moveLeadToClosed) e marcado como closed no leads.`
+      );
+    } catch (err) {
+      console.error('Erro ao mover/marcar lead como fechado (moveLeadToClosed):', err);
+    }
+  };
+
+  // Listener em tempo real para leadsFechados (alterado para 'leadsFechados')
+  useEffect(() => {
+    setIsLoading(true);
+    try {
+      const collRef = collection(db, 'leadsFechados');
+      const unsub = onSnapshot(
+        collRef,
+        (snapshot) => {
+          const lista = snapshot.docs.map((d) => normalizeLead(d.id, d.data()));
+
+          // Ordena localmente por createdAt (se existir)
+          lista.sort((a, b) => {
+            const da = a.createdAt ? new Date(a.createdAt) : new Date(0);
+            const dbb = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            return dbb - da;
+          });
+
+          setLeadsData(lista);
+
+          // Atualiza observações e flags
+          const initialObservacoes = {};
+          const initialIsEditingObservacao = {};
+          lista.forEach((lead) => {
+            initialObservacoes[lead.id] = lead.observacao || '';
+            initialIsEditingObservacao[lead.id] =
+              !lead.observacao || lead.observacao.trim() === '';
+          });
+          setObservacoes(initialObservacoes);
+          setIsEditingObservacao(initialIsEditingObservacao);
+
+          setIsLoading(false);
+        },
+        (err) => {
+          console.error('Erro no listener de leadsFechados:', err);
+          setIsLoading(false);
         }
-    };
+      );
 
-    const aplicarFiltroNome = () => {
-        const filtroLimpo = nomeInput.trim();
-        setFiltroNome(filtroLimpo);
-        setFiltroData('');
-        setDataInput('');
-        setPaginaAtual(1);
-        scrollToTop();
-    };
+      return () => {
+        unsub();
+      };
+    } catch (err) {
+      console.error('Erro ao iniciar listener de leadsFechados:', err);
+      setIsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    const aplicarFiltroData = () => {
-        setFiltroData(dataInput);
-        setFiltroNome('');
-        setNomeInput('');
-        setPaginaAtual(1);
-        scrollToTop();
-    };
+  // Fetch manual (mantido para botão Refresh) — alterado para 'leadsFechados'
+  const fetchLeadsFromFirebase = async () => {
+    setIsLoading(true);
+    try {
+      const querySnapshot = await getDocs(collection(db, 'leadsFechados'));
+      const lista = [];
+      querySnapshot.forEach((docSnap) => {
+        lista.push(normalizeLead(docSnap.id, docSnap.data()));
+      });
 
-    const mesesPt = {
-        janeiro: '01', fevereiro: '02', marco: '03', março: '03', abril: '04', maio: '05',
-        junho: '06', julho: '07', agosto: '08', setembro: '09', outubro: '10',
-        novembro: '11', dezembro: '12'
-    };
+      lista.sort((a, b) => {
+        const da = a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const dbb = b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return dbb - da;
+      });
 
-    const filtroDataToYYYYMM = (filtro) => {
-        if (!filtro) return '';
-        const s = String(filtro).trim();
-        if (/^\d{4}-\d{2}$/.test(s)) return s;
-        const m = s.match(/(janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s*(de)?\s*(\d{4})/i);
-        if (m) {
-            const mesNome = m[1].toLowerCase();
-            const ano = m[3];
-            const mesNum = mesesPt[mesNome] || mesesPt[mesNome.replace('ç','c')] || '';
-            if (mesNum) return `${ano}-${mesNum}`;
+      setLeadsData(lista);
+
+      // Atualiza observações e flags com os dados do fetch manual também
+      const initialObservacoes = {};
+      const initialIsEditingObservacao = {};
+      lista.forEach((lead) => {
+        initialObservacoes[lead.id] = lead.observacao || '';
+        initialIsEditingObservacao[lead.id] =
+          !lead.observacao || lead.observacao.trim() === '';
+      });
+      setObservacoes(initialObservacoes);
+      setIsEditingObservacao(initialIsEditingObservacao);
+    } catch (error) {
+      console.error('Erro ao buscar leadsFechados do Firebase:', error);
+      alert('Erro ao buscar leadsFechados do Firebase. Veja o console para detalhes.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const normalizarTexto = (texto = '') => {
+    return texto
+      .toString()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()@\+\?><\[\]\+]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const isStatusAgendado = (status) => {
+    return typeof status === 'string' && status.startsWith('Agendado');
+  };
+
+  const extractStatusDate = (status) => {
+    if (typeof status !== 'string') return null;
+    const parts = status.split(' - ');
+    return parts.length > 1 ? parts[1] : null;
+  };
+
+  // -------------------------
+  // VISIBILITY: apenas admin vê todos; usuário vê apenas os leads atribuídos a ele
+  // -------------------------
+  const isAdmin = usuarioLogado?.tipo === 'Admin';
+
+  const getCurrentUserFromPropOrStorage = () => {
+    if (usuarioLogado) return usuarioLogado;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const canViewLead = (lead) => {
+    if (isAdmin) return true;
+    const user = getCurrentUserFromPropOrStorage();
+    if (!user) return false;
+
+    // user id values could be in different keys
+    const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
+    const userNome = String(user.nome ?? user.name ?? user.usuario ?? '').trim().toLowerCase();
+
+    // lead.usuarioId can be number or string
+    const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
+    if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+
+    // Compare responsavel / Responsavel names
+    const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '').trim().toLowerCase();
+    if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+
+    // Fallback: raw.usuario/login match
+    const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
+    const userLogin = String(user.usuario ?? '').trim();
+    if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+
+    return false;
+  };
+  // -------------------------
+
+  const contagens = useMemo(() => {
+    // Work off visible leads only
+    const visibleLeads = leadsData.filter((l) => canViewLead(l));
+    let emContatoCount = 0;
+    let semContatoCount = 0;
+    let agendadosCount = 0;
+    let todosCount = 0;
+    const today = new Date().toLocaleDateString('pt-BR');
+
+    visibleLeads.forEach((lead) => {
+      const s = lead.status ?? '';
+      if (s !== 'Fechado' && s !== 'Perdido') {
+        todosCount++;
+      }
+
+      if (s === 'Em Contato') {
+        emContatoCount++;
+      } else if (s === 'Sem Contato') {
+        semContatoCount++;
+      } else if (isStatusAgendado(s)) {
+        const statusDateStr = extractStatusDate(s);
+        if (statusDateStr) {
+          const [dia, mes, ano] = statusDateStr.split('/');
+          const statusDateFormatted = new Date(`${ano}-${mes}-${dia}T00:00:00`).toLocaleDateString('pt-BR');
+          if (statusDateFormatted === today) {
+            agendadosCount++;
+          }
         }
-        const m2 = s.match(/(\d{1,2})[\/\-](\d{4})/);
-        if (m2) {
-            const mes = String(m2[1]).padStart(2, '0');
-            const ano = m2[2];
-            if (parseInt(mes, 10) >= 1 && parseInt(mes, 10) <= 12) return `${ano}-${mes}`;
-        }
-        return '';
+      }
+    });
+
+    return {
+      emContato: emContatoCount,
+      semContato: semContatoCount,
+      agendadosHoje: agendadosCount,
+      todosPendentes: todosCount,
     };
+  }, [leadsData, usuarioLogado]); // recalcula quando leadsData ou usuarioLogado mudar
 
-    const getCurrentUserInfo = () => {
-        try {
-            const auth = getAuth();
-            const user = auth && auth.currentUser;
-            if (user) {
-                return {
-                    name: user.displayName ? String(user.displayName).trim() : '',
-                    email: user.email ? String(user.email).trim() : '',
-                    uid: user.uid ? String(user.uid) : ''
-                };
-            }
-        } catch (e) {}
-        if (Array.isArray(usuarios)) {
-            const foundCurrent = usuarios.find(u => u.isCurrent || u.current || u.isMe || u.me || u.isLogged);
-            if (foundCurrent) {
-                return {
-                    name: foundCurrent.nome || foundCurrent.name || '',
-                    email: foundCurrent.email || foundCurrent.mail || '',
-                    uid: foundCurrent.uid || foundCurrent.id || ''
-                };
-            }
+  useEffect(() => {
+    setHasScheduledToday(contagens.agendadosHoje > 0);
+  }, [contagens]);
+
+  const handleRefreshLeads = async () => {
+    await fetchLeadsFromFirebase();
+  };
+
+  const leadsPorPagina = 10;
+
+  const aplicarFiltroData = () => {
+    setFiltroData(dataInput);
+    setFiltroNome('');
+    setNomeInput('');
+    setFiltroStatus(null);
+    setPaginaAtual(1);
+  };
+
+  const aplicarFiltroNome = () => {
+    const filtroLimpo = nomeInput.trim();
+    setFiltroNome(filtroLimpo);
+    setFiltroData('');
+    setDataInput('');
+    setFiltroStatus(null);
+    setPaginaAtual(1);
+  };
+
+  const aplicarFiltroStatus = (status) => {
+    setFiltroStatus(status);
+    setFiltroNome('');
+    setNomeInput('');
+    setFiltroData('');
+    setDataInput('');
+    setPaginaAtual(1);
+  };
+
+  const isSameMonthAndYear = (leadDateStr, filtroMesAno) => {
+    if (!filtroMesAno) return true;
+    if (!leadDateStr) return false;
+    const leadData = new Date(leadDateStr);
+    const leadAno = leadData.getFullYear();
+    const leadMes = String(leadData.getMonth() + 1).padStart(2, '0');
+    return filtroMesAno === `${leadAno}-${leadMes}`;
+  };
+
+  const nomeContemFiltro = (leadNome, filtroNome) => {
+    if (!filtroNome) return true;
+    if (!leadNome) return false;
+    const nomeNormalizado = normalizarTexto(leadNome);
+    const filtroNormalizado = normalizarTexto(filtroNome);
+    return nomeNormalizado.includes(filtroNormalizado);
+  };
+
+  // Filtra por visibilidade primeiro (apenas leads atribuídos ao usuário, salvo Admin)
+  const gerais = leadsData
+    .filter((lead) => canViewLead(lead))
+    .filter((lead) => {
+      const s = lead.status ?? '';
+      if (s === 'Fechado' || s === 'Perdido') return false;
+
+      if (filtroStatus) {
+        if (filtroStatus === 'Agendado') {
+          const today = new Date();
+          const todayFormatted = today.toLocaleDateString('pt-BR');
+          const statusDateStr = extractStatusDate(lead.status);
+          if (!statusDateStr) return false;
+          const [dia, mes, ano] = statusDateStr.split('/');
+          const statusDate = new Date(`${ano}-${mes}-${dia}T00:00:00`);
+          const statusDateFormatted = statusDate.toLocaleDateString('pt-BR');
+          return isStatusAgendado(lead.status) && statusDateFormatted === todayFormatted;
         }
-        return { name: '', email: '', uid: '' };
-    };
+        return lead.status === filtroStatus;
+      }
 
-    useEffect(() => {
-        setIsLoading(true);
-        try {
-            const q = query(collection(db, 'leadsFechados'), orderBy('closedAt', 'desc'));
-            const unsub = onSnapshot(q, (snapshot) => {
-                const list = snapshot.docs.map(d => {
-                    const data = d.data() || {};
-                    return {
-                        ID: d.id,
-                        Responsavel: data.Responsavel ?? data.responsavel ?? data.ResponsavelName ?? '',
-                        PremioLiquido: data.PremioLiquido ?? data.premioLiquido ?? data.Premio ?? '',
-                        VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? data.VigenciaInicio ?? '',
-                        VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? data.VigenciaFim ?? '',
-                        ...data
-                    };
-                });
-                setLeadsFromFirebase(list);
-                setIsLoading(false);
-            }, (err) => {
-                console.error('Erro no listener leadsFechados:', err);
-                setIsLoading(false);
-            });
+      if (filtroData) {
+        const leadMesAno = lead.createdAt ? String(lead.createdAt).substring(0, 7) : '';
+        return leadMesAno === filtroData;
+      }
 
-            return () => {
-                try { unsub(); } catch (e) {}
-            };
-        } catch (err) {
-            console.error('Erro iniciando listener leadsFechados:', err);
-            setIsLoading(false);
-        }
-    }, []);
+      if (filtroNome) {
+        return nomeContemFiltro(lead.Nome || lead.name || lead.nome, filtroNome);
+      }
 
-    const handleRefresh = async () => {
-        setIsLoading(true);
-        try {
-            const snap = await getDocs(query(collection(db, 'leadsFechados'), orderBy('closedAt', 'desc')));
-            const lista = snap.docs.map(d => {
-                const data = d.data() || {};
-                return {
-                    ID: d.id,
-                    Responsavel: data.Responsavel ?? data.responsavel ?? data.ResponsavelName ?? '',
-                    PremioLiquido: data.PremioLiquido ?? data.premioLiquido ?? data.Premio ?? '',
-                    VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? data.VigenciaInicio ?? '',
-                    VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? data.VigenciaFim ?? '',
-                    ...data
-                };
-            });
-            setLeadsFromFirebase(lista);
-        } catch (error) {
-            console.error('Erro ao atualizar leads fechados (fetch):', error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+      return true;
+    });
 
-    useEffect(() => {
-        handleRefresh();
-    }, []);
+  const totalPaginas = Math.max(1, Math.ceil(gerais.length / leadsPorPagina));
+  const paginaCorrigida = Math.min(paginaAtual, totalPaginas);
+  const usuariosAtivos = usuarios ? usuarios.filter((u) => u.status === 'Ativo') : [];
 
-    useEffect(() => {
-        const sourceLeads = (Array.isArray(leadsFromFirebase) && leadsFromFirebase.length > 0) ? leadsFromFirebase : (Array.isArray(leads) ? leads : []);
-        let fechadosAtuais = sourceLeads.filter(lead => {
-            const status = String(lead.Status ?? lead.status ?? '').toLowerCase();
-            if (status === 'fechado') return true;
-            if (lead.closedAt) return true;
-            if (lead.VigenciaInicial || lead.VigenciaFinal) return true;
-            return false;
+  const handleSelect = (leadId, userId) => {
+    setSelecionados((prev) => ({
+      ...prev,
+      [leadId]: Number(userId),
+    }));
+  };
+
+  const enviarLeadAtualizado = async (lead) => {
+    if (!lead || !lead.id) return;
+    try {
+      const leadRef = doc(db, 'leads', lead.id);
+      const dataToUpdate = {};
+      if ('usuarioId' in lead) dataToUpdate.usuarioId = lead.usuarioId ?? null;
+      if ('responsavel' in lead) dataToUpdate.responsavel = lead.responsavel ?? null;
+      if (Object.keys(dataToUpdate).length > 0) {
+        await updateDoc(leadRef, dataToUpdate);
+      }
+    } catch (error) {
+      console.error('Erro ao enviar lead atualizado para Firebase:', error);
+    }
+  };
+
+  const handleEnviar = (leadId) => {
+    const finalUserId = selecionados[leadId];
+
+    if (!finalUserId) {
+      alert('Selecione um usuário antes de enviar.');
+      return;
+    }
+
+    if (typeof saveLocalChange === 'function') {
+      saveLocalChange({
+        id: leadId,
+        type: 'alterarAtribuido',
+        data: { leadId, usuarioId: finalUserId },
+      });
+    }
+
+    transferirLead(leadId, finalUserId);
+
+    const usuario = usuariosAtivos.find((u) => String(u.id) === String(finalUserId));
+    const responsavelNome = usuario ? usuario.nome : null;
+
+    const lead = leadsData.find((l) => l.id === leadId);
+    const leadAtualizado = { ...lead, usuarioId: finalUserId, responsavel: responsavelNome };
+
+    enviarLeadAtualizado(leadAtualizado);
+  };
+
+  const handleAlterar = async (leadId) => {
+    if (typeof saveLocalChange === 'function') {
+      saveLocalChange({
+        id: leadId,
+        type: 'alterarAtribuido',
+        data: { leadId, usuarioId: null },
+      });
+    }
+
+    setSelecionados((prev) => ({
+      ...prev,
+      [leadId]: '',
+    }));
+    transferirLead(leadId, null);
+
+    try {
+      const leadRef = doc(db, 'leads', leadId);
+      await updateDoc(leadRef, { usuarioId: null, responsavel: null });
+    } catch (error) {
+      console.error('Erro ao alterar atribuição no Firebase:', error);
+      alert('Erro ao alterar atribuição. Veja o console.');
+    }
+  };
+
+  const inicio = (paginaCorrigida - 1) * leadsPorPagina;
+  const fim = inicio + leadsPorPagina;
+  const leadsPagina = gerais.slice(inicio, fim);
+
+  const scrollToTop = () => {
+    if (scrollContainerRef && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  const handlePaginaAnterior = () => {
+    setPaginaAtual((prev) => Math.max(prev - 1, 1));
+    scrollToTop();
+  };
+
+  const handlePaginaProxima = () => {
+    setPaginaAtual((prev) => Math.min(prev + 1, totalPaginas));
+    scrollToTop();
+  };
+
+  const formatarData = (dataStr) => {
+    if (!dataStr) return '';
+    try {
+      const d = new Date(dataStr);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('pt-BR');
+    } catch {
+      return '';
+    }
+  };
+
+  const handleObservacaoChange = (leadId, text) => {
+    setObservacoes((prev) => ({
+      ...prev,
+      [leadId]: text,
+    }));
+  };
+
+  const handleSalvarObservacao = async (leadId) => {
+    const observacaoTexto = observacoes[leadId] || '';
+    if (!observacaoTexto.trim()) {
+      alert('Por favor, digite uma observação antes de salvar.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (typeof saveLocalChange === 'function') {
+        saveLocalChange({
+          id: leadId,
+          type: 'salvarObservacao',
+          data: { leadId, observacao: observacaoTexto },
         });
+      }
 
-        // -------------------------
-        // VISIBILITY: apenas admin vê todos; usuário vê apenas os leads atribuídos a ele
-        // -------------------------
-        const canViewLead = (lead) => {
-            if (isAdmin) return true;
+      const leadRef = doc(db, 'leads', leadId);
+      await updateDoc(leadRef, { observacao: observacaoTexto });
+      setIsEditingObservacao((prev) => ({ ...prev, [leadId]: false }));
+    } catch (error) {
+      console.error('Erro ao salvar observação no Firebase:', error);
+      alert('Erro ao salvar observação. Por favor, tente novamente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-            const user = getCurrentUserInfo();
-            if (!user) return false;
+  const handleAlterarObservacao = (leadId) => {
+    setIsEditingObservacao((prev) => ({ ...prev, [leadId]: true }));
+  };
 
-            const userId = String(user.uid ?? user.id ?? user.ID ?? '').trim();
-            const userNome = String(user.name ?? '').trim().toLowerCase();
-            const userEmail = String(user.email ?? '').trim().toLowerCase();
+  const isValidDDMMYYYY = (str) => {
+    if (!str || typeof str !== 'string') return false;
+    const parts = str.split('/');
+    if (parts.length !== 3) return false;
+    const [d, m, y] = parts.map((p) => parseInt(p, 10));
+    if (!d || !m || !y) return false;
+    const dt = new Date(y, m - 1, d);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+  };
 
-            // lead.usuarioId can be number or string
-            const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
-            if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+  const handleConfirmStatus = async (leadId, novoStatus, phoneOrDate) => {
+    // Se for Fechado -> abrir modal de fechamento
+    if (novoStatus === 'Fechado') {
+      const lead = leadsData.find((l) => String(l.id) === String(leadId));
+      if (!lead) {
+        alert('Lead não encontrada para fechamento.');
+        return;
+      }
+      openClosingModal(lead);
+      return;
+    }
 
-            // Compare responsavel / Responsavel names
-            const leadResponsavel = String(lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? lead.Responsible ?? lead.transferidoPara ?? lead.assignedTo ?? '').trim().toLowerCase();
-            if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+    // fluxo antigo para outros statuses
+    if (typeof saveLocalChange === 'function') {
+      saveLocalChange({
+        id: leadId,
+        type: 'atualizarStatus',
+        data: { leadId, status: novoStatus, phone: phoneOrDate || null },
+      });
+    }
 
-            // Compare responsavel UIDs (se existir)
-            const leadResponsavelUid = String(lead.ResponsavelUid ?? lead.responsavelUid ?? lead.responsavelId ?? lead.ResponsavelId ?? lead.assignedUid ?? '').trim();
-            if (leadResponsavelUid && userId && leadResponsavelUid === userId) return true;
+    try {
+      onUpdateStatus && onUpdateStatus(leadId, novoStatus, phoneOrDate);
+    } catch (err) {
+      console.warn('onUpdateStatus disparado, mas houve erro/ausência:', err);
+    }
 
-            // Compare responsavel email (se existir)
-            const leadResponsavelEmail = String(lead.ResponsavelEmail ?? lead.responsavelEmail ?? lead.emailResponsavel ?? lead.assignedEmail ?? lead.email ?? '').trim().toLowerCase();
-            if (leadResponsavelEmail && userEmail && leadResponsavelEmail === userEmail) return true;
+    setIsLoading(true);
+    try {
+      const leadRef = doc(db, 'leads', leadId);
 
-            return false;
-        };
+      let finalStatus = novoStatus;
+      let agendamento = null;
 
-        // Aplica filtro de visibilidade
-        fechadosAtuais = fechadosAtuais.filter((lead) => canViewLead(lead));
-
-        // sync valores, nomeTemporario, premio display e vigencia (idêntico ao seu código anterior)
-        setValores(prevValores => {
-            const novosValores = { ...prevValores };
-            fechadosAtuais.forEach(lead => {
-                const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
-                const rawPremioFromApi = String(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? '');
-                const premioFromApi = parseFloat(rawPremioFromApi.replace(/\./g, '').replace(',', '.'));
-                const premioInCents = isNaN(premioFromApi) || rawPremioFromApi === '' ? null : Math.round(premioFromApi * 100);
-
-                const apiComissao = lead.Comissao ?? lead.comissao ?? '';
-                const apiParcelamento = lead.Parcelamento ?? lead.parcelamento ?? '';
-                const apiInsurer = lead.Seguradora ?? lead.insurer ?? '';
-                const apiMeioPagamento = lead.MeioPagamento ?? lead.meioPagamento ?? '';
-                const apiCartaoPortoNovo = lead.CartaoPortoNovo ?? lead.cartaoPortoNovo ?? '';
-
-                if (!novosValores[key]) novosValores[key] = {};
-
-                if ((novosValores[key].PremioLiquido === undefined || novosValores[key].PremioLiquido === null) && premioInCents !== null) {
-                    novosValores[key].PremioLiquido = premioInCents;
-                } else if (novosValores[key].PremioLiquido === undefined) {
-                    novosValores[key].PremioLiquido = null;
-                }
-
-                if ((novosValores[key].Comissao === undefined || novosValores[key].Comissao === '') && apiComissao !== '') {
-                    novosValores[key].Comissao = typeof apiComissao === 'string' ? apiComissao : String(apiComissao);
-                } else if (novosValores[key].Comissao === undefined) {
-                    novosValores[key].Comissao = '';
-                }
-
-                if ((novosValores[key].Parcelamento === undefined || novosValores[key].Parcelamento === '') && apiParcelamento !== '') {
-                    novosValores[key].Parcelamento = String(apiParcelamento);
-                } else if (novosValores[key].Parcelamento === undefined) {
-                    novosValores[key].Parcelamento = '';
-                }
-
-                if ((novosValores[key].insurer === undefined || novosValores[key].insurer === '') && apiInsurer !== '') {
-                    novosValores[key].insurer = String(apiInsurer);
-                } else if (novosValores[key].insurer === undefined) {
-                    novosValores[key].insurer = '';
-                }
-
-                if ((novosValores[key].MeioPagamento === undefined || novosValores[key].MeioPagamento === '') && apiMeioPagamento !== '') {
-                    novosValores[key].MeioPagamento = String(apiMeioPagamento);
-                } else if (novosValores[key].MeioPagamento === undefined) {
-                    novosValores[key].MeioPagamento = '';
-                }
-
-                if ((novosValores[key].CartaoPortoNovo === undefined || novosValores[key].CartaoPortoNovo === '') && apiCartaoPortoNovo !== '') {
-                    novosValores[key].CartaoPortoNovo = String(apiCartaoPortoNovo);
-                } else if (novosValores[key].CartaoPortoNovo === undefined) {
-                    novosValores[key].CartaoPortoNovo = '';
-                }
-            });
-            return novosValores;
-        });
-
-        setNomeTemporario(prevNomes => {
-            const novosNomes = { ...prevNomes };
-            fechadosAtuais.forEach(lead => {
-                const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
-                if (novosNomes[key] === undefined) {
-                    novosNomes[key] = lead.name || lead.Nome || lead.nome || '';
-                }
-            });
-            return novosNomes;
-        });
-
-        setPremioLiquidoInputDisplay(prevDisplay => {
-            const newDisplay = { ...prevDisplay };
-            fechadosAtuais.forEach(lead => {
-                const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
-                const currentPremio = String(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? '');
-                if (currentPremio !== '') {
-                    const premioFloat = parseFloat(currentPremio.toString().replace(',', '.').replace(/\s/g, '').replace(/\./g, ''));
-                    newDisplay[key] = isNaN(premioFloat) ? '' : premioFloat.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                } else if (prevDisplay[key] === undefined) {
-                    newDisplay[key] = '';
-                }
-            });
-            return newDisplay;
-        });
-
-        setVigencia(prevVigencia => {
-            const novasVigencias = { ...prevVigencia };
-            fechadosAtuais.forEach(lead => {
-                const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
-                const vigenciaInicioStrApi = lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? lead.vigenciaInicio ?? '';
-                const vigenciaFinalStrApi = lead.VigenciaFinal ?? lead.vigenciaFinal ?? lead.VigenciaFim ?? lead.vigenciaFim ?? '';
-
-                if (!novasVigencias[key]) novasVigencias[key] = { inicio: '', final: '' };
-
-                if (vigenciaInicioStrApi && (!novasVigencias[key].inicio || novasVigencias[key].inicio === '')) {
-                    const normalizedInicio = getDataParaComparacao(vigenciaInicioStrApi);
-                    novasVigencias[key].inicio = normalizedInicio || String(vigenciaInicioStrApi);
-                }
-
-                if (vigenciaFinalStrApi && (!novasVigencias[key].final || novasVigencias[key].final === '')) {
-                    const normalizedFinal = getDataParaComparacao(vigenciaFinalStrApi);
-                    novasVigencias[key].final = normalizedFinal || String(vigenciaFinalStrApi);
-                } else if (!novasVigencias[key].final && novasVigencias[key].inicio) {
-                    try {
-                        const d = new Date(novasVigencias[key].inicio + 'T00:00:00');
-                        d.setFullYear(d.getFullYear() + 1);
-                        const y = d.getFullYear();
-                        const m = String(d.getMonth() + 1).padStart(2, '0');
-                        const day = String(d.getDate()).padStart(2, '0');
-                        novasVigencias[key].final = `${y}-${m}-${day}`;
-                    } catch (e) {}
-                }
-            });
-            return novasVigencias;
-        });
-
-        const fechadosOrdenados = [...fechadosAtuais].sort((a, b) => {
-            const timeFrom = (lead) => {
-                const vi = getDataParaComparacao(lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? '');
-                if (vi) {
-                    const d = new Date(vi + 'T00:00:00');
-                    if (!isNaN(d.getTime())) return d.getTime();
-                }
-                if (lead.closedAt && typeof lead.closedAt.toDate === 'function') return -lead.closedAt.toDate().getTime();
-                if (lead.closedAt) {
-                    const d = new Date(lead.closedAt);
-                    if (!isNaN(d.getTime())) return d.getTime();
-                }
-                const dataStr = lead.Data ?? lead.data ?? '';
-                const iso = getDataParaComparacao(String(dataStr));
-                if (iso) {
-                    const d = new Date(iso + 'T00:00:00');
-                    if (!isNaN(d.getTime())) return d.getTime();
-                }
-                return 0;
-            };
-            return timeFrom(b) - timeFrom(a);
-        });
-
-        let leadsFiltrados;
-        if (filtroNome) {
-            leadsFiltrados = fechadosOrdenados.filter(lead =>
-                nomeContemFiltro(lead.name || lead.Nome || lead.nome || lead.Responsavel || '', filtroNome)
-            );
-        } else if (filtroData) {
-            const targetYYYYMM = filtroDataToYYYYMM(filtroData);
-            leadsFiltrados = fechadosOrdenados.filter(lead => {
-                const vigenciaInicioRaw = lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? lead.vigencia_inicio ?? lead.Vigencia ?? '';
-                const dataLeadFormatada = getDataParaComparacao(vigenciaInicioRaw);
-                const dataLeadMesAno = dataLeadFormatada ? dataLeadFormatada.substring(0, 7) : '';
-                return dataLeadMesAno === targetYYYYMM;
-            });
+      if (novoStatus === 'Agendar') {
+        if (isValidDDMMYYYY(phoneOrDate)) {
+          agendamento = phoneOrDate;
+          finalStatus = `Agendado - ${agendamento}`;
         } else {
-            leadsFiltrados = fechadosOrdenados;
+          finalStatus = 'Agendado';
+          agendamento = null;
         }
-
-        setFechadosFiltradosInterno(leadsFiltrados);
-    }, [leadsFromFirebase, leads, filtroNome, filtroData, isAdmin, usuarios]);
-
-    const formatarMoeda = (valorCentavos) => {
-        if (valorCentavos === null || isNaN(valorCentavos)) return '';
-        return (valorCentavos / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    };
-
-    const handleNomeBlur = (id, novoNome) => {
-        const nomeAtualizado = novoNome.trim();
-        const origem = (leadsFromFirebase.length ? leadsFromFirebase : leads);
-        const lead = origem.find(l => String(l.ID) === String(id) || String(l.id) === String(id));
-        if (lead && (lead.name !== nomeAtualizado && lead.Nome !== nomeAtualizado && lead.nome !== nomeAtualizado)) {
-            if (nomeAtualizado) {
-                setNomeTemporario(prev => ({
-                    ...prev,
-                    [`${id}`]: nomeAtualizado,
-                }));
-                onUpdateDetalhes(id, 'name', nomeAtualizado);
-            } else {
-                setNomeTemporario(prev => ({
-                    ...prev,
-                    [`${id}`]: lead.name || lead.Nome || lead.nome || '',
-                }));
-            }
+      } else if (typeof novoStatus === 'string' && novoStatus.startsWith('Agendado')) {
+        const possibleDate = extractStatusDate(novoStatus);
+        if (isValidDDMMYYYY(possibleDate)) {
+          agendamento = possibleDate;
+          finalStatus = novoStatus;
+        } else {
+          finalStatus = novoStatus;
+          agendamento = null;
         }
-    };
+      } else {
+        finalStatus = novoStatus;
+        agendamento = null;
+      }
 
-    const handlePremioLiquidoChange = (id, valor) => {
-        let cleanedValue = valor.replace(/[^\d,\.]/g, '');
-        const commaParts = cleanedValue.split(',');
-        if (commaParts.length > 2) cleanedValue = commaParts[0] + ',' + commaParts.slice(1).join('');
-        if (commaParts.length > 1 && commaParts[1].length > 2) cleanedValue = commaParts[0] + ',' + commaParts[1].slice(0, 2);
+      const dataToUpdate = { status: finalStatus };
 
-        setPremioLiquidoInputDisplay(prev => ({ ...prev, [`${id}`]: cleanedValue }));
+      if (phoneOrDate && typeof phoneOrDate === 'string' && !isValidDDMMYYYY(phoneOrDate)) {
+        dataToUpdate.phone = phoneOrDate;
+      }
 
-        const valorParaParse = cleanedValue.replace(/\./g, '').replace(',', '.');
-        const valorEmReais = parseFloat(valorParaParse);
-        const valorParaEstado = isNaN(valorEmReais) || cleanedValue === '' ? null : Math.round(valorEmReais * 100);
+      const observacaoAtual = observacoes[leadId];
+      if (observacaoAtual && observacaoAtual.trim() !== '') {
+        dataToUpdate.observacao = observacaoAtual;
+      }
 
-        setValores(prev => ({ ...prev, [`${id}`]: { ...prev[`${id}`], PremioLiquido: valorParaEstado } }));
-    };
+      if (agendamento) {
+        dataToUpdate.agendamento = agendamento;
+      } else {
+        dataToUpdate.agendamento = null;
+      }
 
-    const handlePremioLiquidoBlur = (id) => {
-        const valorCentavos = valores[`${id}`]?.PremioLiquido;
-        let valorReais = null;
-        if (valorCentavos !== null && !isNaN(valorCentavos)) valorReais = valorCentavos / 100;
-        setPremioLiquidoInputDisplay(prev => ({ ...prev, [`${id}`]: valorCentavos !== null && !isNaN(valorCentavos) ? formatarMoeda(valorCentavos) : '' }));
-        onUpdateDetalhes(id, 'PremioLiquido', valorReais);
-    };
+      await updateDoc(leadRef, dataToUpdate);
 
-    const handleComissaoChange = (id, valor) => {
-        let cleanedValue = valor.replace(/[^\d,]/g, '');
-        const parts = cleanedValue.split(',');
-        if (parts.length > 2) cleanedValue = parts[0] + ',' + parts.slice(1).join('');
-        if (parts.length > 1 && parts[1].length > 2) cleanedValue = parts[0] + ',' + parts[1].slice(0, 2);
+      const currentLead = leadsData.find((l) => l.id === leadId);
+      const hasNoObservacao =
+        !currentLead || !currentLead.observacao || currentLead.observacao.trim() === '';
 
-        setValores(prev => ({ ...prev, [`${id}`]: { ...prev[`${id}`], Comissao: cleanedValue } }));
-    };
+      if (
+        (finalStatus === 'Em Contato' ||
+          finalStatus === 'Sem Contato' ||
+          (typeof finalStatus === 'string' && finalStatus.startsWith('Agendado'))) &&
+        hasNoObservacao
+      ) {
+        setIsEditingObservacao((prev) => ({ ...prev, [leadId]: true }));
+      } else {
+        setIsEditingObservacao((prev) => ({ ...prev, [leadId]: false }));
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar status no Firebase:', error);
+      alert('Erro ao atualizar status. Veja o console.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    const handleComissaoBlur = (id) => {
-        const comissaoInput = valores[`${id}`]?.Comissao || '';
-        const comissaoFloat = parseFloat(comissaoInput.replace(',', '.'));
-        onUpdateDetalhes(id, 'Comissao', isNaN(comissaoFloat) ? '' : comissaoFloat);
-    };
+  // ---------------- Modal: funções auxiliares ----------------
+  const toDateInputValue = (date = new Date()) => {
+    const d = new Date(date);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${yyyy}-${mm}-${dd}`; // formato para <input type="date">
+  };
 
-    const handleParcelamentoChange = (id, valor) => {
-        setValores(prev => ({ ...prev, [`${id}`]: { ...prev[`${id}`], Parcelamento: valor } }));
-        onUpdateDetalhes(id, 'Parcelamento', valor);
-    };
+  const addOneYearDateInputValue = (date = new Date()) => {
+    const d = new Date(date);
+    d.setFullYear(d.getFullYear() + 1);
+    return toDateInputValue(d);
+  };
 
-    const handleMeioPagamentoChange = (id, valor) => {
-        setValores(prev => {
-            const newState = { ...prev, [`${id}`]: { ...prev[`${id}`], MeioPagamento: valor } };
-            if (valor !== 'CP' && newState[`${id}`]?.CartaoPortoNovo) {
-                newState[`${id}`].CartaoPortoNovo = '';
-                onUpdateDetalhes(id, 'CartaoPortoNovo', '');
-            }
-            return newState;
+  // Formatação de moeda para input: aceita digitação de números e formata como R$
+  const formatCurrencyFromDigits = (digits) => {
+    if (!digits) return '';
+    const int = parseInt(digits, 10);
+    if (isNaN(int)) return '';
+    const value = int / 100;
+    return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const extractDigits = (str = '') => (str ? String(str).replace(/\D/g, '') : '');
+
+  const handlePremioChange = (e) => {
+    const raw = e.target.value;
+    // permitimos que o usuário cole ou digite já formatado; extraímos dígitos e formatamos
+    const digits = extractDigits(raw);
+    const formatted = digits ? formatCurrencyFromDigits(digits) : '';
+    setModalPremioLiquido(formatted);
+  };
+
+  // Comissão: mantemos número inteiro e adicionamos '%'
+  const handleComissaoChange = (e) => {
+    const raw = e.target.value;
+    const digits = extractDigits(raw).slice(0, 3); // até 3 dígitos (ex: 100%)
+    if (!digits) {
+      setModalComissao('');
+      return;
+    }
+    setModalComissao(`${parseInt(digits, 10)}%`);
+  };
+
+  const openClosingModal = (lead) => {
+    setClosingLead(lead);
+    setModalNome(lead.Nome || lead.name || lead.nome || '');
+    setModalSeguradora(lead.Seguradora || lead.insurer || '');
+    setModalMeioPagamento(lead.MeioPagamento || '');
+    // CartaoPortoNovo deve ser 'Sim' ou 'Não'
+    setModalCartaoPortoNovo(lead.CartaoPortoNovo ? String(lead.CartaoPortoNovo) : 'Não');
+    setModalPremioLiquido(lead.PremioLiquido ? String(lead.PremioLiquido) : '');
+    // se a comissao vier como '10%' mantém; se vier '10' converte
+    const com = lead.Comissao ?? lead.comissao ?? '';
+    setModalComissao(com ? (String(com).includes('%') ? String(com) : `${String(extractDigits(com) || com)}%`) : '');
+    setModalParcelamento(lead.Parcelamento ? String(lead.Parcelamento) : '1');
+    const hoje = new Date();
+    setModalVigenciaInicial(toDateInputValue(hoje));
+    setModalVigenciaFinal(addOneYearDateInputValue(hoje));
+    setIsClosingModalOpen(true);
+  };
+
+  const closeClosingModal = () => {
+    setIsClosingModalOpen(false);
+    setClosingLead(null);
+    setIsSubmittingClose(false);
+    // reset modal values (opcional)
+    // setModalNome('');
+    // ...
+  };
+
+  // Ao submeter o fechamento (Concluir Venda)
+  const handleConcluirVenda = async () => {
+    if (!closingLead) return;
+    setIsSubmittingClose(true);
+
+    try {
+      const leadId = String(closingLead.id);
+      // Converte datas do input para ISO strings
+      const vigIniISO = modalVigenciaInicial ? new Date(`${modalVigenciaInicial}T00:00:00`).toISOString() : '';
+      const vigFinISO = modalVigenciaFinal ? new Date(`${modalVigenciaFinal}T00:00:00`).toISOString() : '';
+
+      // Monta payload para leadsFechados (campos em português conforme pedido)
+      const payload = {
+        ID: closingLead.ID ?? closingLead.id ?? leadId,
+        id: leadId,
+        Nome: modalNome,
+        name: modalNome,
+        Modelo: closingLead.Modelo ?? closingLead.vehicleModel ?? '',
+        AnoModelo: closingLead.AnoModelo ?? closingLead.vehicleYearModel ?? '',
+        Cidade: closingLead.Cidade ?? closingLead.city ?? '',
+        Telefone: closingLead.Telefone ?? closingLead.phone ?? '',
+        TipoSeguro: closingLead.TipoSeguro ?? closingLead.insuranceType ?? '',
+        usuarioId: closingLead.usuarioId ?? null,
+        Seguradora: modalSeguradora || '',
+        MeioPagamento: modalMeioPagamento || '',
+        CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
+        PremioLiquido: modalPremioLiquido || '',
+        Comissao: modalComissao || '',
+        Parcelamento: modalParcelamento || '',
+        VigenciaInicial: vigIniISO || '',
+        VigenciaFinal: vigFinISO || '',
+        Status: 'Fechado',
+        Observacao: closingLead.observacao ?? closingLead.Observacao ?? '',
+        Responsavel: closingLead.responsavel ?? closingLead.Responsavel ?? usuarioLogado?.nome ?? '',
+        Data: closingLead.Data ?? formatDDMMYYYYFromISO(closingLead.createdAt) ?? '',
+        createdAt: closingLead.createdAt ?? null,
+        closedAt: serverTimestamp(),
+      };
+
+      // Salva em leadsFechados com ID fixo igual ao leadId (document id do Firestore)
+      const closedRef = doc(db, 'leadsFechados', leadId);
+      await setDoc(closedRef, payload);
+
+      // --- NOVO: grava também em 'renovacoes' (mesmo payload, mesmo doc id) ---
+      try {
+        const renovRef = doc(db, 'renovacoes', leadId);
+        const renovPayload = {
+          ...payload,
+          // garante que existam timestamps próprios para renovacoes (se quiser rastrear)
+          registeredAt: serverTimestamp(),
+        };
+        await setDoc(renovRef, renovPayload);
+      } catch (errRenov) {
+        console.error('Erro ao gravar em renovacoes:', errRenov);
+        // não interrompe o fluxo principal; só registra o erro
+      }
+      // --- FIM gravação em renovacoes ---
+
+      // Atualiza lead original: status, closedAt e campos de venda/nome
+      const originalRef = doc(db, 'leads', leadId);
+      const updatePayload = {
+        status: 'Fechado',
+        closedAt: serverTimestamp(),
+        Seguradora: modalSeguradora || '',
+        PremioLiquido: modalPremioLiquido || '',
+        Comissao: modalComissao || '',
+        Parcelamento: modalParcelamento || '',
+        MeioPagamento: modalMeioPagamento || '',
+        CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
+        VigenciaInicial: vigIniISO || '',
+        VigenciaFinal: vigFinISO || '',
+        Nome: modalNome,
+        name: modalNome,
+        insurerConfirmed: true,
+      };
+
+      // aplica também saveLocalChange para manter sincronização local se existir a função
+      if (typeof saveLocalChange === 'function') {
+        saveLocalChange({
+          id: leadId,
+          type: 'alterar_seguradora',
+          data: {
+            leadId,
+            Seguradora: modalSeguradora || '',
+            PremioLiquido: modalPremioLiquido || '',
+            Comissao: modalComissao || '',
+            Parcelamento: modalParcelamento || '',
+            MeioPagamento: modalMeioPagamento || '',
+            CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
+            VigenciaInicial: vigIniISO || '',
+            VigenciaFinal: vigFinISO || '',
+            Nome: modalNome,
+          },
         });
-        onUpdateDetalhes(id, 'MeioPagamento', valor);
-    };
+      }
 
-    const handleCartaoPortoChange = (id, valor) => {
-        setValores(prev => ({ ...prev, [`${id}`]: { ...prev[`${id}`], CartaoPortoNovo: valor } }));
-        onUpdateDetalhes(id, 'CartaoPortoNovo', valor);
-    };
+      await updateDoc(originalRef, updatePayload);
 
-    const handleInsurerChange = (id, valor) => {
-        const portoSeguradoras = ['Porto Seguro', 'Azul Seguros', 'Itau Seguros'];
-        setValores(prev => {
-            const newState = { ...prev, [`${id}`]: { ...prev[`${id}`], insurer: valor } };
-            if (!portoSeguradoras.includes(valor) && newState[`${id}`]?.CartaoPortoNovo) {
-                newState[`${id}`].CartaoPortoNovo = '';
-                onUpdateDetalhes(id, 'CartaoPortoNovo', '');
-            }
-            return newState;
-        });
-    };
+      // sucesso: fecha modal e deixa o listener atualizar a lista automaticamente
+      closeClosingModal();
+      alert('Venda concluída e registrada em leadsFechados com sucesso.');
+    } catch (err) {
+      console.error('Erro ao concluir venda:', err);
+      alert('Erro ao concluir venda. Veja o console para detalhes.');
+      setIsSubmittingClose(false);
+    }
+  };
 
-    const handleVigenciaInicioChange = (id, dataString) => {
-        let dataFinal = '';
-        if (dataString) {
-            const dataInicioObj = new Date(dataString + 'T00:00:00');
-            if (!isNaN(dataInicioObj.getTime())) {
-                const anoInicio = dataInicioObj.getFullYear();
-                const mesInicio = String(dataInicioObj.getMonth() + 1).padStart(2, '0');
-                const diaInicio = String(dataInicioObj.getDate()).padStart(2, '0');
-                const anoFinal = anoInicio + 1;
-                dataFinal = `${anoFinal}-${mesInicio}-${diaInicio}`;
-            }
-        }
-        setVigencia(prev => ({ ...prev, [`${id}`]: { ...prev[`${id}`], inicio: dataString, final: dataFinal } }));
-        onUpdateDetalhes(id, 'VigenciaInicial', dataString);
-        onUpdateDetalhes(id, 'VigenciaFinal', dataFinal);
-    };
+  // Listas fixas
+  const seguradoraOptions = [
+    '',
+    'Porto Seguro',
+    'Azul Seguros',
+    'Itau Seguros',
+    'Tokio Marine',
+    'Yelum Seguros',
+    'Suhai Seguros',
+    'Allianz Seguros',
+    'Bradesco Seguros',
+    'Mitsui Seguros',
+    'Hdi Seguros',
+    'Aliro Seguros',
+    'Zurich Seguros',
+    'Alfa Seguros',
+    'Demais Seguradoras',
+  ];
 
-    const totalPaginas = Math.max(1, Math.ceil(fechadosFiltradosInterno.length / leadsPorPagina));
-    const paginaCorrigida = Math.min(paginaAtual, totalPaginas);
-    const inicio = (paginaCorrigida - 1) * leadsPorPagina;
-    const fim = inicio + leadsPorPagina;
-    const leadsPagina = fechadosFiltradosInterno.slice(inicio, fim);
+  const meioPagamentoOptions = ['', 'CP', 'CC', 'Debito', 'Boleto'];
 
-    const handlePaginaAnterior = () => { setPaginaAtual(prev => Math.max(prev - 1, 1)); scrollToTop(); };
-    const handlePaginaProxima = () => { setPaginaAtual(prev => Math.min(prev + 1, totalPaginas)); scrollToTop(); };
-
-    // safeConfirm: envoltório com checagem de rede e try/catch para falhas de fetch
-    const safeConfirm = async (...args) => {
-        // args: (leadKey, premio, insurer, comissao, parcelamento, inicio, final, meioPagamento, cartaoPorto)
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-            alert('Sem conexão de rede. Verifique sua internet e tente novamente.');
-            return;
-        }
-        setIsLoading(true);
-        try {
-            if (typeof onConfirmInsurer !== 'function') {
-                throw new Error('A função onConfirmInsurer não está definida.');
-            }
-            await onConfirmInsurer(...args);
-            // opcional: mostrar confirmação amigável
-            // alert('Lead enviado com sucesso.');
-        } catch (err) {
-            console.error('Erro ao enviar lead:', err);
-            // Mensagem amigável
-            const msg = err && err.message ? err.message : String(err);
-            // Se for provável problema de CORS, sugerir verificação:
-            let sugestao = '';
-            if (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('networkrequest failed')) {
-                sugestao = '\nPossíveis causas: servidor inacessível, endpoint errado ou bloqueio por CORS.';
-            }
-            alert('Erro ao enviar lead: ' + msg + sugestao);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    return (
-        <div className="p-4 md:p-6 lg:p-8 relative min-h-screen bg-gray-100 font-sans">
-            {isLoading && (
-                <div className="absolute inset-0 bg-white bg-opacity-80 flex justify-center items-center z-50">
-                    <div className="flex flex-col items-center">
-                        <svg className="animate-spin h-10 w-10 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <p className="ml-4 text-xl font-semibold text-gray-700 mt-3">Carregando...</p>
-                    </div>
-                </div>
-            )}
-
-            {/* Cabeçalho e filtros (igual ao anterior) */}
-            <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4 mb-4">
-                    <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
-                        <CheckCircle size={32} className="text-green-500 mr-3" />
-                        Leads Fechados
-                    </h1>
-                    <button title="Atualizar dados" onClick={handleRefresh} disabled={isLoading}
-                        className={`p-3 rounded-full transition duration-300 ${isLoading ? 'text-gray-400 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 shadow-sm'}`}>
-                        <RefreshCcw size={24} className={isLoading ? '' : 'hover:rotate-180'} />
-                    </button>
-                </div>
-                <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch">
-                    <div className="flex itens-center gap-2 flex-1 min-w-[200px]">
-                        <input type="text" placeholder="Buscar por nome..." value={nomeInput} onChange={(e) => setNomeInput(e.target.value)}
-                            className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 text-sm" />
-                        <button onClick={aplicarFiltroNome} className="p-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition duration-200 shadow-md">
-                            <Search size={20} />
-                        </button>
-                    </div>
-                    <div className="flex items-center gap-2 flex-1 min-w-[200px] justify-end">
-                        <input type="month" value={dataInput} onChange={(e) => setDataInput(e.target.value)}
-                            className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm" title="Filtrar por Mês/Ano de Vigência Inicial" />
-                        <button onClick={aplicarFiltroData} className="p-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition duration-200 shadow-md whitespace-nowrap">
-                            Filtrar Data
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* Lista de cards (renderização igual ao seu código original) */}
-            <div className="space-y-5">
-                {fechadosFiltradosInterno.length === 0 && !isLoading ? (
-                    <div className="text-center p-12 bg-white rounded-xl shadow-md text-gray-600 text-lg">
-                        <p> Você ainda não tem nenhum fechamento, mas logo terá! 😉  </p>
-                    </div>
-                ) : (
-                    leadsPagina.map((lead) => {
-                        const responsavelName = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? '';
-                        const responsavel = Array.isArray(usuarios) ? usuarios.find((u) => u.nome === responsavelName) : undefined;
-                        const isSeguradoraPreenchida = !!(lead.Seguradora ?? lead.insurer ?? lead.raw?.Seguradora);
-                        const leadKey = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
-                        const currentInsurer = valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? '');
-                        const currentMeioPagamento = valores[`${leadKey}`]?.MeioPagamento || (lead.MeioPagamento ?? lead.meioPagamento ?? '');
-                        const isPortoInsurer = ['Porto Seguro', 'Azul Seguros', 'Itau Seguros'].includes(currentInsurer);
-                        const isCPPayment = currentMeioPagamento === 'CP';
-                        const showCartaoPortoNovo = isPortoInsurer && isCPPayment;
-                        const isButtonDisabled =
-                            ! (valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? '')) ||
-                            valores[`${leadKey}`]?.PremioLiquido === null ||
-                            valores[`${leadKey}`]?.PremioLiquido === undefined ||
-                            !valores[`${leadKey}`]?.Comissao ||
-                            parseFloat(String(valores[`${leadKey}`]?.Comissao || '0').replace(',', '.')) === 0 ||
-                            !valores[`${leadKey}`]?.Parcelamento ||
-                            valores[`${leadKey}`]?.Parcelamento === '' ||
-                            !vigencia[`${leadKey}`]?.inicio ||
-                            !vigencia[`${leadKey}`]?.final;
-
-                        return (
-                            <div key={leadKey} className={`bg-white rounded-xl shadow-lg hover:shadow-xl transition duration-300 p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative border-t-4 ${isSeguradoraPreenchida ? 'border-green-600' : 'border-amber-500'}`}>
-                                <div className="col-span-1 border-b pb-4 lg:border-r lg:pb-0 lg:pr-6">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        {isSeguradoraPreenchida ? (
-                                            <h3 className="text-xl font-bold text-gray-900">{nomeTemporario[leadKey] || lead.name || lead.Nome || lead.nome}</h3>
-                                        ) : (
-                                            <div className="flex flex-col w-full">
-                                                <input type="text" value={nomeTemporario[leadKey] ?? (lead.name || lead.Nome || lead.nome || '')}
-                                                    onChange={(e) => setNomeTemporario(prev => ({ ...prev, [leadKey]: e.target.value }))}
-                                                    onBlur={(e) => handleNomeBlur(leadKey, e.target.value)}
-                                                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                                                    className="text-xl font-bold text-gray-900 border border-indigo-300 rounded-lg p-1 focus:ring-indigo-500 focus:border-indigo-500" />
-                                                <span className='text-xs text-gray-500 mt-1'>Atualize o nome com o mesmo da proposta.</span>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div className="space-y-1 text-sm text-gray-700">
-                                        <p><strong>Responsável:</strong> {responsavelName}</p>
-                                        <p><strong>Modelo:</strong> {lead.vehicleModel ?? lead.Modelo}</p>
-                                        <p><strong>Ano/Modelo:</strong> {lead.vehicleYearModel ?? lead.AnoModelo ?? lead.anoModelo}</p>
-                                        <p><strong>Cidade:</strong> {lead.city ?? lead.Cidade}</p>
-                                        <p><strong>Telefone:</strong> {lead.phone ?? lead.Telefone}</p>
-                                        <p><strong>Tipo de Seguro:</strong> {lead.insuranceType ?? lead.TipoSeguro}</p>
-                                    </div>
-
-                                    {responsavelName && (
-                                        <p className="mt-4 text-sm font-semibold text-green-600 bg-green-50 p-2 rounded-lg">
-                                            Transferido para: <strong>{responsavelName}</strong>
-                                        </p>
-                                    )}
-                                </div>
-
-                                <div className="col-span-1 border-b pb-4 lg:border-r lg:pb-0 lg:px-6">
-                                    <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center">
-                                        <DollarSign size={18} className="mr-2 text-green-500" />
-                                        Detalhes do Fechamento
-                                    </h3>
-                                    <div className="mb-4">
-                                        <label className="text-xs font-semibold text-gray-600 block mb-1">Seguradora</label>
-                                        <select value={valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? '')}
-                                            onChange={(e) => handleInsurerChange(leadKey, e.target.value)} disabled={isSeguradoraPreenchida}
-                                            className="w-full p-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500">
-                                            <option value="">Selecione a seguradora</option>
-                                            <option value="Porto Seguro">Porto Seguro</option>
-                                            <option value="Azul Seguros">Azul Seguros</option>
-                                            <option value="Itau Seguros">Itau Seguros</option>
-                                            <option value="Tokio">Tokio</option>
-                                            <option value="Yelum">Yelum</option>
-                                            <option value="Bradesco">Bradesco</option>
-                                            <option value="Allianz">Allianz</option>
-                                            <option value="Suhai">Suhai</option>
-                                            <option value="Hdi">Hdi</option>
-                                            <option value="Zurich">Zurich</option>
-                                            <option value="Mitsui">Mitsui</option>
-                                            <option value="Mapfre">Mapfre</option>
-                                            <option value="Alfa">Alfa</option>
-                                            <option value="Demais Seguradoras">Demais Seguradoras</option>
-                                        </select>
-                                    </div>
-
-                                    <div className="mb-4">
-                                        <label className="text-xs font-semibold text-gray-600 block mb-1">Meio de Pagamento</label>
-                                        <select value={valores[`${leadKey}`]?.MeioPagamento || (lead.MeioPagamento ?? lead.meioPagamento ?? '')}
-                                            onChange={(e) => handleMeioPagamentoChange(leadKey, e.target.value)} disabled={isSeguradoraPreenchida}
-                                            className="w-full p-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500">
-                                            <option value=""> </option>
-                                            <option value="CP">CP</option>
-                                            <option value="CC">CC</option>
-                                            <option value="Debito">Debito</option>
-                                            <option value="Boleto">Boleto</option>
-                                        </select>
-                                    </div>
-
-                                    {showCartaoPortoNovo && (
-                                        <div className="mb-4">
-                                            <label className="text-xs font-semibold text-gray-600 block mb-1">Cartão Porto Seguro Novo?</label>
-                                            <select value={valores[`${leadKey}`]?.CartaoPortoNovo || (lead.CartaoPortoNovo ?? lead.cartaoPortoNovo ?? '')}
-                                                onChange={(e) => handleCartaoPortoChange(leadKey, e.target.value)} disabled={isSeguradoraPreenchida}
-                                                className="w-full p-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500">
-                                                <option value=""> </option>
-                                                <option value="Sim">Sim</option>
-                                                <option value="Não">Não</option>
-                                            </select>
-                                        </div>
-                                    )}
-
-                                    <div className="grid grid-cols-2 gap-3 mt-4">
-                                        <div>
-                                            <label className="text-xs font-semibold text-gray-600 block mb-1">Prêmio Líquido</label>
-                                            <div className="relative">
-                                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 font-bold text-sm">R$</span>
-                                                <input type="text" placeholder="0,00"
-                                                    value={premioLiquidoInputDisplay[`${leadKey}`] || (valores[`${leadKey}`]?.PremioLiquido !== undefined && valores[`${leadKey}`]?.PremioLiquido !== null ? formatarMoeda(valores[`${leadKey}`].PremioLiquido) : (lead.PremioLiquido ?? lead.premioLiquido ?? ''))}
-                                                    onChange={(e) => handlePremioLiquidoChange(leadKey, e.target.value)}
-                                                    onBlur={() => handlePremioLiquidoBlur(leadKey)}
-                                                    disabled={isSeguradoraPreenchida}
-                                                    className="w-full p-2 pl-8 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500 text-right" />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="text-xs font-semibold text-gray-600 block mb-1">Comissão (%)</label>
-                                            <div className="relative">
-                                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 font-bold text-sm">%</span>
-                                                <input type="text" placeholder="0,00" value={valores[`${leadKey}`]?.Comissao || ''}
-                                                    onChange={(e) => handleComissaoChange(leadKey, e.target.value)} onBlur={() => handleComissaoBlur(leadKey)}
-                                                    disabled={isSeguradoraPreenchida}
-                                                    className="w-full p-2 pl-8 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500 text-right" />
-                                            </div>
-                                        </div>
-
-                                        <div className="col-span-2">
-                                            <label className="text-xs font-semibold text-gray-600 block mb-1">Parcelamento</label>
-                                            <select value={valores[`${leadKey}`]?.Parcelamento || ''} onChange={(e) => handleParcelamentoChange(leadKey, e.target.value)} disabled={isSeguradoraPreenchida}
-                                                className="w-full p-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500">
-                                                <option value="">Selecione o Parcelamento</option>
-                                                {[...Array(12)].map((_, i) => (<option key={i + 1} value={`${i + 1}`}>{i + 1}</option>))}
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="col-span-1 lg:pl-6">
-                                    <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center">
-                                        <Calendar size={18} className="mr-2 text-green-500" />
-                                        Vigência
-                                    </h3>
-
-                                    <div className="mb-4">
-                                        <label htmlFor={`vigencia-inicio-${leadKey}`} className="text-xs font-semibold text-gray-600 block mb-1">Início</label>
-                                        <input id={`vigencia-inicio-${leadKey}`} type="date"
-                                            value={vigencia[`${leadKey}`]?.inicio || getDataParaComparacao(lead.VigenciaInicial ?? lead.vigenciaInicial ?? '') || ''}
-                                            onChange={(e) => handleVigenciaInicioChange(leadKey, e.target.value)} disabled={isSeguradoraPreenchida}
-                                            className="w-full p-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500" />
-                                    </div>
-
-                                    <div className="mb-6">
-                                        <label htmlFor={`vigencia-final-${leadKey}`} className="text-xs font-semibold text-gray-600 block mb-1">Término (Automático)</label>
-                                        <input id={`vigencia-final-${leadKey}`} type="date" value={vigencia[`${leadKey}`]?.final || getDataParaComparacao(lead.VigenciaFinal ?? lead.vigenciaFinal ?? '') || ''}
-                                            readOnly disabled className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-gray-100 cursor-not-allowed" />
-                                    </div>
-
-                                    {!isSeguradoraPreenchida ? (
-                                        <button onClick={async () => {
-                                            await safeConfirm(
-                                                leadKey,
-                                                valores[`${leadKey}`]?.PremioLiquido === null ? null : valores[`${leadKey}`]?.PremioLiquido / 100,
-                                                valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? ''),
-                                                parseFloat(String(valores[`${leadKey}`]?.Comissao || '0').replace(',', '.')),
-                                                valores[`${leadKey}`]?.Parcelamento,
-                                                vigencia[`${leadKey}`]?.inicio,
-                                                vigencia[`${leadKey}`]?.final,
-                                                valores[`${leadKey}`]?.MeioPagamento || '',
-                                                valores[`${leadKey}`]?.CartaoPortoNovo || ''
-                                            );
-                                        }} disabled={isButtonDisabled || isLoading}
-                                            title={isButtonDisabled ? 'Preencha todos os campos para confirmar.' : 'Confirmar e finalizar renovação.'}
-                                            className={`w-full py-3 rounded-xl font-bold transition duration-300 shadow-lg flex items-center justify-center ${isButtonDisabled ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>
-                                            <CheckCircle size={20} className="mr-2" />
-                                            Concluir Venda!
-                                        </button>
-                                    ) : (
-                                        <div className="w-full py-3 px-4 rounded-xl font-bold bg-green-100 text-green-700 flex items-center justify-center border border-green-300">
-                                            <CheckCircle size={20} className="mr-2" />
-                                            Fechado!
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })
-                )}
-            </div>
-
-            {fechadosFiltradosInterno.length > 0 && (
-                <div className="mt-8 flex justify-center bg-white p-4 rounded-xl shadow-lg">
-                    <div className="flex justify-center items-center gap-4 mt-8 pb-8">
-                        <button onClick={handlePaginaAnterior} disabled={paginaCorrigida <= 1 || isLoading}
-                            className={`px-4 py-2 rounded-lg border text-sm font-medium transition duration-150 shadow-md ${(paginaCorrigida <= 1 || isLoading) ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'}`}>
-                            Anterior
-                        </button>
-
-                        <span className="text-gray-700 font-semibold">Página {paginaCorrigida} de {totalPaginas}</span>
-
-                        <button onClick={handlePaginaProxima} disabled={paginaCorrigida >= totalPaginas || isLoading}
-                            className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${(paginaCorrigida >= totalPaginas || isLoading) ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'}`}>
-                            Próxima
-                        </button>
-                    </div>
-                </div>
-            )}
+  return (
+    <div className="p-4 md:p-6 lg:p-8 relative min-h-screen bg-gray-100 font-sans">
+      {isLoading && (
+        <div className="fixed inset-0 bg-white bg-opacity-80 flex justify-center items-center z-50">
+          <div className="flex items-center">
+            <svg className="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p className="ml-4 text-xl font-semibold text-gray-700">Carregando LEADS...</p>
+          </div>
         </div>
-    );
+      )}
+
+      <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+        <div className="flex flex-wrap itens-center justify-between gap-4 border-b pb-4 mb-4">
+          <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
+            <Bell size={32} className="text-indigo-500 mr-3" />
+            Leads
+          </h1>
+
+          <div className="flex items-center gap-4">
+            <button
+              title="Atualizar dados"
+              onClick={handleRefreshLeads}
+              disabled={isLoading}
+              className={`p-3 rounded-full transition duration-300 ${isLoading ? 'text-gray-400 cursor-not-allowed' : 'text-indigo-600 hover:bg-indigo-100 shadow-sm'}`}
+            >
+              <RefreshCcw size={24} className={isLoading ? '' : 'hover:rotate-180'} />
+            </button>
+
+            {hasScheduledToday && (
+              <div
+                className="relative cursor-pointer"
+                onClick={() => setShowNotification(!showNotification)}
+                title="Agendamentos para Hoje"
+              >
+                <Bell size={32} className="text-red-500" />
+                <div className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold ring-2 ring-white">
+                  {contagens.agendadosHoje}
+                </div>
+                {showNotification && (
+                  <div className="absolute top-10 right-0 w-64 bg-white border border-gray-200 rounded-lg p-3 shadow-xl z-10">
+                    <p className="text-sm font-semibold text-gray-800">Você tem agendamentos hoje!</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch">
+          <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+            <input
+              type="text"
+              placeholder="Buscar por nome..."
+              value={nomeInput}
+              onChange={(e) => setNomeInput(e.target.value)}
+              className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+              title="Filtrar leads pelo nome (contém)"
+            />
+            <button
+              onClick={aplicarFiltroNome}
+              className="p-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition duration-200 shadow-md"
+            >
+              <Search size={20} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1 min-w-[200px] justify-end">
+            <input
+              type="month"
+              value={dataInput}
+              onChange={(e) => setDataInput(e.target.value)}
+              className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm"
+              title="Filtrar leads pelo mês e ano de criação"
+            />
+            <button
+              onClick={aplicarFiltroData}
+              className="p-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition duration-200 shadow-md whitespace-nowrap"
+            >
+              Filtrar Data
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3 justify-center mb-8">
+        <button
+          onClick={() => aplicarFiltroStatus('Em Contato')}
+          className={`
+            px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
+            ${filtroStatus === 'Em Contato' ? 'bg-orange-600 text-white ring-2 ring-orange-400' : 'bg-orange-500 text-white hover:bg-orange-600'}
+          `}
+        >
+          Em Contato <span className="text-sm font-extrabold ml-1">({contagens.emContato})</span>
+        </button>
+
+        <button
+          onClick={() => aplicarFiltroStatus('Sem Contato')}
+          className={`
+            px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
+            ${filtroStatus === 'Sem Contato' ? 'bg-gray-700 text-white ring-2 ring-gray-400' : 'bg-gray-500 text-white hover:bg-gray-600'}
+          `}
+        >
+          Sem Contato <span className="text-sm font-extrabold ml-1">({contagens.semContato})</span>
+        </button>
+
+        {contagens.agendadosHoje > 0 && (
+          <button
+            onClick={() => aplicarFiltroStatus('Agendado')}
+            className={`
+              px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
+              ${filtroStatus === 'Agendado' ? 'bg-blue-700 text-white ring-2 ring-blue-400' : 'bg-blue-500 text-white hover:bg-blue-600'}
+            `}
+          >
+            Agendados <span className="text-sm font-extrabold ml-1">({contagens.agendadosHoje})</span>
+          </button>
+        )}
+
+        <button
+          onClick={() => aplicarFiltroStatus(null)}
+          className={`
+            px-5 py-2 rounded-full font-bold transition duração-300 shadow-lg
+            ${filtroStatus === null ? 'bg-gray-800 text-white ring-2 ring-gray-500' : 'bg-gray-600 text-white hover:bg-gray-700'}
+          `}
+        >
+          Todos <span className="text-sm font-extrabold ml-1">({contagens.todosPendentes})</span>
+        </button>
+      </div>
+
+      <div className="space-y-5">
+        {isLoading ? null : gerais.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-md p-6 text-center">
+            <p className="text-xl font-medium text-gray-600">Você não tem nenhum lead, aguarde. 🧐</p>
+          </div>
+        ) : (
+          <>
+            {leadsPagina.map((lead) => {
+              const responsavel = usuarios ? usuarios.find((u) => u.nome === lead.responsavel) : null;
+              const hasObservacaoSection = (lead.status === 'Em Contato' || lead.status === 'Sem Contato' || isStatusAgendado(lead.status));
+
+              return (
+                <div
+                  key={lead.id}
+                  className="bg-white rounded-xl shadow-lg hover:shadow-xl transition duration-300 p-6 relative border-t-4 border-indigo-500"
+                >
+                  <div className={`grid ${hasObservacaoSection ? 'lg:grid-cols-2' : 'lg:grid-cols-1'} gap-6`}>
+                    <div className="space-y-4">
+                      <Lead
+                        lead={lead}
+                        onUpdateStatus={handleConfirmStatus}
+                        disabledConfirm={!lead.responsavel}
+                      />
+
+                      <div className="pt-4 border-t border-gray-100 mt-4">
+                        {lead.responsavel && responsavel ? (
+                          <div className="flex items-center gap-3">
+                            <p className="text-base text-green-600 font-semibold">
+                              Transferido para <strong className="font-extrabold">{responsavel.nome}</strong>
+                            </p>
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleAlterar(lead.id)}
+                                className="px-3 py-1 bg-yellow-400 text-gray-900 text-sm rounded-md hover:bg-yellow-500 transition duration-150 shadow-sm"
+                              >
+                                Alterar
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <select
+                              value={selecionados[lead.id] || ''}
+                              onChange={(e) => handleSelect(lead.id, e.target.value)}
+                              className="p-2 border border-gray-300 rounded-md text-sm shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                            >
+                              <option value="">Selecione usuário ativo</option>
+                              {usuariosAtivos.map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.nome}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => handleEnviar(lead.id)}
+                              className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition duration-150 shadow-md whitespace-nowrap"
+                            >
+                              Enviar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {hasObservacaoSection && (
+                      <div className="lg:border-l lg:border-gray-200 lg:pl-6 space-y-3">
+                        <label htmlFor={`observacao-${lead.id}`} className="block text-sm font-semibold text-gray-700">
+                          Observações:
+                        </label>
+                        <textarea
+                          id={`observacao-${lead.id}`}
+                          value={observacoes[lead.id] || ''}
+                          onChange={(e) => handleObservacaoChange(lead.id, e.target.value)}
+                          placeholder="Adicione suas observações aqui..."
+                          rows="3"
+                          disabled={!isEditingObservacao[lead.id]}
+                          className={`
+                            w-full p-3 rounded-lg border text-sm resize-y shadow-sm
+                            ${isEditingObservacao[lead.id] ? 'bg-white border-indigo-500 focus:ring-indigo-500' : 'bg-gray-50 border-gray-200 cursor-not-allowed'}
+                          `}
+                        ></textarea>
+
+                        {isEditingObservacao[lead.id] ? (
+                          <button
+                            onClick={() => handleSalvarObservacao(lead.id)}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition duration-150 font-bold shadow-md"
+                          >
+                            Salvar Observação
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleAlterarObservacao(lead.id)}
+                            className="px-4 py-2 bg-yellow-400 text-gray-900 rounded-md hover:bg-yellow-500 transition duration-150 font-bold shadow-md"
+                          >
+                            Alterar Observação
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div
+                    className="absolute bottom-2 right-4 text-xs text-gray-400 italic"
+                    title={`Criado em: ${formatarData(lead.createdAt)}`}
+                  >
+                    Criado em: {formatarData(lead.createdAt)}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="flex justify-center items-center gap-4 mt-8 pb-8">
+              <button
+                onClick={handlePaginaAnterior}
+                disabled={paginaCorrigida <= 1 || isLoading}
+                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
+                  (paginaCorrigida <= 1 || isLoading)
+                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                    : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
+                }`}
+              >
+                Anterior
+              </button>
+
+              <span className="text-gray-700 font-semibold">
+                Página {paginaCorrigida} de {totalPaginas}
+              </span>
+
+              <button
+                onClick={handlePaginaProxima}
+                disabled={paginaCorrigida >= totalPaginas || isLoading}
+                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duração-150 shadow-md ${
+                  (paginaCorrigida >= totalPaginas || isLoading)
+                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                    : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
+                }`}
+              >
+                Próxima
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Modal de Concluir Venda */}
+      {isClosingModalOpen && closingLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 relative">
+            <h2 className="text-xl font-bold mb-4">Concluir Venda</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">ID (fixo)</label>
+                <input readOnly value={String(closingLead.id)} className="mt-1 w-full p-2 border rounded bg-gray-100 text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Nome</label>
+                <input value={modalNome} onChange={(e) => setModalNome(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Seguradora</label>
+                <select
+                  value={modalSeguradora}
+                  onChange={(e) => setModalSeguradora(e.target.value)}
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                >
+                  {seguradoraOptions.map((opt) => (
+                    <option key={opt} value={opt}>{opt === '' ? '— selecione —' : opt}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Meio de pagamento</label>
+                <select
+                  value={modalMeioPagamento}
+                  onChange={(e) => {
+                    setModalMeioPagamento(e.target.value);
+                    // se mudar para CP inicia Cartao como 'Não' por padrão
+                    if (e.target.value === 'CP' && (!modalCartaoPortoNovo || modalCartaoPortoNovo === '')) {
+                      setModalCartaoPortoNovo('Não');
+                    }
+                    // se tirar CP, limpa CartaoPortoNovo
+                    if (e.target.value !== 'CP') {
+                      setModalCartaoPortoNovo('Não');
+                    }
+                  }}
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                >
+                  {meioPagamentoOptions.map((m) => (
+                    <option key={m} value={m}>{m === '' ? '— selecione —' : m}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Cartao Porto Seguro Novo: aparece somente se MeioPagamento === 'CP' */}
+              {modalMeioPagamento === 'CP' && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700">Cartão Porto Seguro Novo?</label>
+                  <select
+                    value={modalCartaoPortoNovo}
+                    onChange={(e) => setModalCartaoPortoNovo(e.target.value)}
+                    className="mt-1 w-full p-2 border rounded text-sm"
+                  >
+                    <option value="Sim">Sim</option>
+                    <option value="Não">Não</option>
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Prêmio Líquido</label>
+                <input
+                  value={modalPremioLiquido}
+                  onChange={handlePremioChange}
+                  placeholder="R$ 0,00"
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Comissão</label>
+                <input
+                  value={modalComissao}
+                  onChange={handleComissaoChange}
+                  placeholder="10%"
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Parcelamento</label>
+                <select
+                  value={modalParcelamento}
+                  onChange={(e) => setModalParcelamento(e.target.value)}
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={String(n)}>{String(n)}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Vigência Inicial</label>
+                <input type="date" value={modalVigenciaInicial} onChange={(e) => {
+                  setModalVigenciaInicial(e.target.value);
+                  // atualiza final automaticamente para +1 ano quando inicial muda
+                  try {
+                    const d = new Date(`${e.target.value}T00:00:00`);
+                    d.setFullYear(d.getFullYear() + 1);
+                    setModalVigenciaFinal(toDateInputValue(d));
+                  } catch { }
+                }} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Vigência Final</label>
+                <input type="date" value={modalVigenciaFinal} onChange={(e) => setModalVigenciaFinal(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={closeClosingModal} disabled={isSubmittingClose} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">
+                Cancelar
+              </button>
+              <button onClick={handleConcluirVenda} disabled={isSubmittingClose} className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700">
+                {isSubmittingClose ? 'Processando...' : 'Concluir Venda'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
-export default LeadsFechados;
+export default Leads;
