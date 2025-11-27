@@ -236,10 +236,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             const status = String(lead.Status ?? lead.status ?? '').toLowerCase();
             if (status === 'fechado') return true;
             if (lead.closedAt) return true;
-            // If VigenciaFinal exists and VigenciaInicial exists, consider as fechado as well (defensive)
             if (lead.VigenciaInicial || lead.VigenciaFinal) {
-                // Not necessarily means closed, but keep for compatibility with previous logic:
-                // previous logic filtered by leads where Status === 'Fechado', but we want closed leads collection anyway
                 return true;
             }
             return false;
@@ -760,9 +757,9 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                         <p><strong>Tipo de Seguro:</strong> {lead.insuranceType ?? lead.TipoSeguro}</p>
                                     </div>
 
-                                    {responsavel && isAdmin && (
+                                    {responsavelName && (
                                         <p className="mt-4 text-sm font-semibold text-green-600 bg-green-50 p-2 rounded-lg">
-                                            Transferido para: <strong>{responsavel.nome}</strong>
+                                            Transferido para: <strong>{responsavelName}</strong>
                                         </p>
                                     )}
                                 </div>
