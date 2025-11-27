@@ -315,7 +315,7 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         scrollToTop();
     };
 
-    // --- Listener em tempo real para leadsFechados no Firestore ---
+    // --- Novo: Listener em tempo real para leadsFechados no Firestore ---
     useEffect(() => {
         setIsLoading(true);
         try {
@@ -352,65 +352,104 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
 
     // --------------------------
     // VISIBILITY: apenas admin vê todos; usuário vê apenas os fechados atribuidos a ele
-    // (Lógica adaptada para comparar Responsavel com o usuário logado — leitura de múltiplas chaves do localStorage)
+    // (Lógica adaptada para comparar Responsavel com o usuário logado — desta vez usando a lista `usuarios` proveniente do Firestore)
     // --------------------------
     const getCurrentUserFromStorage = () => {
-        // Tenta várias chaves comuns no localStorage: 'user', 'usuarioLogado', 'usuario'
-        const keysToTry = ['user', 'usuarioLogado', 'usuario'];
-        for (const k of keysToTry) {
-            try {
-                const raw = localStorage.getItem(k);
-                if (!raw) continue;
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') return parsed;
-            } catch (e) {
-                // não é JSON, tentar tratar como string simples (ex.: nome)
-                const raw = localStorage.getItem(k);
-                if (raw) return { nome: raw, usuario: raw };
-            }
+        try {
+            const raw = localStorage.getItem('user');
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (e) {
+            return null;
         }
-        return null;
+    };
+
+    // Novo: tenta resolver o usuário logado consultando a prop `usuarios` (carregada da coleção 'usuarios')
+    const getLoggedUsuarioFromUsuarios = () => {
+        try {
+            const stored = getCurrentUserFromStorage();
+            if (!stored) return null;
+
+            const storedId = String(stored.id ?? stored.ID ?? stored.userId ?? stored.uid ?? '').trim();
+            const storedLogin = String(stored.usuario ?? stored.user ?? stored.login ?? stored.email ?? '').trim();
+            const storedNome = normalizarTexto(String(stored.nome ?? stored.name ?? '').trim());
+
+            if (!Array.isArray(usuarios)) return null;
+
+            // 1) tentar por id exato
+            if (storedId) {
+                const foundById = usuarios.find(u => {
+                    const uid = String(u.id ?? u.ID ?? u.userId ?? u.uid ?? '').trim();
+                    return uid && uid === storedId;
+                });
+                if (foundById) return foundById;
+            }
+
+            // 2) tentar por login/email/usuario
+            if (storedLogin) {
+                const foundByLogin = usuarios.find(u => {
+                    const uLogin = String(u.usuario ?? u.user ?? u.email ?? '').trim();
+                    return uLogin && uLogin === storedLogin;
+                });
+                if (foundByLogin) return foundByLogin;
+            }
+
+            // 3) tentar por nome (normalizado)
+            if (storedNome) {
+                const foundByNome = usuarios.find(u => {
+                    const uNome = normalizarTexto(String(u.nome ?? '').trim());
+                    return uNome && uNome === storedNome;
+                });
+                if (foundByNome) return foundByNome;
+            }
+
+            return null;
+        } catch (e) {
+            return null;
+        }
     };
 
     const canViewLead = (lead) => {
         if (isAdmin) return true;
-        const user = getCurrentUserFromStorage();
-        if (!user) return false;
 
-        // Normalize IDs and names for robust comparison
-        const userId = String(user.id ?? user.ID ?? user.userId ?? user.uid ?? '').trim();
-        const userNomeRaw = user.nome ?? user.name ?? user.usuario ?? user.user ?? '';
-        const userNome = normalizarTexto(String(userNomeRaw).trim());
+        const loggedFromUsuarios = getLoggedUsuarioFromUsuarios();
+        const stored = getCurrentUserFromStorage();
 
-        // lead.usuarioId can be number or string
+        // Lead usuarioId (string) normalized
         const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
-        if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
 
-        // Compare Responsavel / responsavel names using normalization (accent-insensitive, case-insensitive)
-        const leadResponsavelRaw = lead.responsavel ?? lead.Responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
-        const leadResponsavel = normalizarTexto(String(leadResponsavelRaw).trim());
-        if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+        // 1) If we have a user from usuarios prop, prefer that match
+        if (loggedFromUsuarios) {
+            const loggedId = String(loggedFromUsuarios.id ?? loggedFromUsuarios.ID ?? loggedFromUsuarios.userId ?? loggedFromUsuarios.uid ?? '').trim();
+            if (loggedId && leadUsuarioId && loggedId === leadUsuarioId) return true;
 
-        // Fallback: raw.usuario/login match
-        const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
-        const userLogin = String(user.usuario ?? user.user ?? '').trim();
-        if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+            // Compare normalized names: lead.Responsavel vs loggedFromUsuarios.nome
+            const leadResponsavelRaw = lead.responsavel ?? lead.Responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
+            const leadResponsavel = normalizarTexto(String(leadResponsavelRaw).trim());
+            const loggedNome = normalizarTexto(String(loggedFromUsuarios.nome ?? loggedFromUsuarios.name ?? '').trim());
+            if (leadResponsavel && loggedNome && leadResponsavel === loggedNome) return true;
 
-        // Also check if the usuarios prop contains the current user and the lead.Responsavel equals that name
-        try {
-            if ((!userNome || userNome === '') && Array.isArray(usuarios) && usuarios.length > 0) {
-                // tenta encontrar usuário logado pela comparação de login (usuario) em localStorage com usuarios prop
-                const possibleLogin = String(user.usuario ?? user.user ?? '').trim();
-                if (possibleLogin) {
-                    const found = usuarios.find(u => String(u.usuario) === possibleLogin || String(u.email) === possibleLogin || String(u.id) === possibleLogin);
-                    if (found) {
-                        const foundNome = normalizarTexto(String(found.nome ?? '').trim());
-                        if (foundNome && leadResponsavel === foundNome) return true;
-                    }
-                }
-            }
-        } catch (e) {
-            // ignore fallback errors
+            // Compare login fields
+            const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
+            const loggedLogin = String(loggedFromUsuarios.usuario ?? loggedFromUsuarios.user ?? loggedFromUsuarios.email ?? '').trim();
+            if (leadUsuarioLogin && loggedLogin && leadUsuarioLogin === loggedLogin) return true;
+
+            return false;
+        }
+
+        // 2) Fallback para checagem usando apenas localStorage (caso usuarios prop não contenha o logado)
+        if (stored) {
+            const userId = String(stored.id ?? stored.ID ?? stored.userId ?? stored.uid ?? '').trim();
+            if (userId && leadUsuarioId && userId === leadUsuarioId) return true;
+
+            const leadResponsavelRaw = lead.responsavel ?? lead.Responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
+            const leadResponsavel = normalizarTexto(String(leadResponsavelRaw).trim());
+            const storedNome = normalizarTexto(String(stored.nome ?? stored.name ?? stored.usuario ?? '').trim());
+            if (leadResponsavel && storedNome && leadResponsavel === storedNome) return true;
+
+            const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
+            const storedLogin = String(stored.usuario ?? stored.user ?? '').trim();
+            if (leadUsuarioLogin && storedLogin && leadUsuarioLogin === storedLogin) return true;
         }
 
         return false;
