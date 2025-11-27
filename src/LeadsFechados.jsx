@@ -1,7 +1,3 @@
-// Coloque aqui o mesmo código do seu LeadsFechados com apenas uma alteração:
-// substituímos o onClick do botão "Concluir Venda!" por uma chamada segura a safeConfirm.
-// Para facilitar, abaixo está o componente completo com essa alteração.
-
 import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCcw, Search, CheckCircle, DollarSign, Calendar } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
@@ -217,56 +213,40 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             return false;
         });
 
-        if (!isAdmin) {
-            const current = getCurrentUserInfo();
-            const currentNameNorm = normalizarTexto(current.name || '');
-            const currentEmailNorm = normalizarTexto(current.email || '');
-            const currentUid = String(current.uid || '').trim();
+        // -------------------------
+        // VISIBILITY: apenas admin vê todos; usuário vê apenas os leads atribuídos a ele
+        // -------------------------
+        const canViewLead = (lead) => {
+            if (isAdmin) return true;
 
-            if (!currentNameNorm && !currentEmailNorm && !currentUid) {
-                fechadosAtuais = [];
-            } else {
-                fechadosAtuais = fechadosAtuais.filter(lead => {
-                    const resp = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? lead.Responsible ?? lead.transferidoPara ?? lead.assignedTo ?? '';
-                    const respEmail = lead.ResponsavelEmail ?? lead.responsavelEmail ?? lead.emailResponsavel ?? lead.assignedEmail ?? lead.email ?? '';
-                    const respUid = lead.ResponsavelUid ?? lead.responsavelUid ?? lead.responsavelId ?? lead.ResponsavelId ?? lead.responsavel_uid ?? lead.assignedUid ?? '';
+            const user = getCurrentUserInfo();
+            if (!user) return false;
 
-                    const respNorm = normalizarTexto(String(resp || ''));
-                    const respEmailNorm = normalizarTexto(String(respEmail || ''));
+            const userId = String(user.uid ?? user.id ?? user.ID ?? '').trim();
+            const userNome = String(user.name ?? '').trim().toLowerCase();
+            const userEmail = String(user.email ?? '').trim().toLowerCase();
 
-                    if (currentUid && respUid && String(respUid).trim() !== '' && String(respUid).trim() === String(currentUid)) {
-                        return true;
-                    }
-                    if (currentEmailNorm && respEmailNorm && respEmailNorm === currentEmailNorm) {
-                        return true;
-                    }
-                    if (currentNameNorm && respNorm) {
-                        if (respNorm === currentNameNorm) return true;
-                        if (respNorm.includes(currentNameNorm)) return true;
-                        if (currentNameNorm.includes(respNorm) && respNorm.length > 2) return true;
-                    }
-                    if (Array.isArray(usuarios) && current.email) {
-                        const matchedUser = usuarios.find(u => {
-                            const uEmail = (u.email || u.mail || '').toString().trim();
-                            return uEmail && normalizarTexto(uEmail) === currentEmailNorm;
-                        });
-                        if (matchedUser) {
-                            const matchedNameNorm = normalizarTexto(matchedUser.nome || matchedUser.name || '');
-                            if (matchedNameNorm && respNorm && (respNorm === matchedNameNorm || respNorm.includes(matchedNameNorm))) {
-                                return true;
-                            }
-                        }
-                    }
-                    const otherCandidates = [lead.transferidoPara, lead.transferidoParaNome, lead.assignedTo, lead.assignedName, lead.transferTo];
-                    for (const cand of otherCandidates) {
-                        if (cand && normalizarTexto(String(cand)).includes(currentNameNorm) && currentNameNorm.length > 0) {
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-            }
-        }
+            // lead.usuarioId can be number or string
+            const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
+            if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+
+            // Compare responsavel / Responsavel names
+            const leadResponsavel = String(lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? lead.Responsible ?? lead.transferidoPara ?? lead.assignedTo ?? '').trim().toLowerCase();
+            if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+
+            // Compare responsavel UIDs (se existir)
+            const leadResponsavelUid = String(lead.ResponsavelUid ?? lead.responsavelUid ?? lead.responsavelId ?? lead.ResponsavelId ?? lead.assignedUid ?? '').trim();
+            if (leadResponsavelUid && userId && leadResponsavelUid === userId) return true;
+
+            // Compare responsavel email (se existir)
+            const leadResponsavelEmail = String(lead.ResponsavelEmail ?? lead.responsavelEmail ?? lead.emailResponsavel ?? lead.assignedEmail ?? lead.email ?? '').trim().toLowerCase();
+            if (leadResponsavelEmail && userEmail && leadResponsavelEmail === userEmail) return true;
+
+            return false;
+        };
+
+        // Aplica filtro de visibilidade
+        fechadosAtuais = fechadosAtuais.filter((lead) => canViewLead(lead));
 
         // sync valores, nomeTemporario, premio display e vigencia (idêntico ao seu código anterior)
         setValores(prevValores => {
@@ -630,7 +610,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                 ) : (
                     leadsPagina.map((lead) => {
                         const responsavelName = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? '';
-                        const responsavel = usuarios.find((u) => u.nome === responsavelName);
+                        const responsavel = Array.isArray(usuarios) ? usuarios.find((u) => u.nome === responsavelName) : undefined;
                         const isSeguradoraPreenchida = !!(lead.Seguradora ?? lead.insurer ?? lead.raw?.Seguradora);
                         const leadKey = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
                         const currentInsurer = valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? '');
