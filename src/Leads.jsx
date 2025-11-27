@@ -7,6 +7,8 @@ import {
   doc,
   updateDoc,
   onSnapshot,
+  setDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
 
@@ -94,6 +96,80 @@ const Leads = ({
       // mantém outros campos brutos (se necessário)
       ...data,
     };
+  };
+
+  // Função para formatar ISO -> DD/MM/YYYY
+  const formatDDMMYYYYFromISO = (isoOrString) => {
+    if (!isoOrString) return '';
+    try {
+      // if firebase Timestamp-like
+      if (typeof isoOrString === 'object' && typeof isoOrString.toDate === 'function') {
+        const d = isoOrString.toDate();
+        return d.toLocaleDateString('pt-BR');
+      }
+      const d = new Date(isoOrString);
+      if (isNaN(d.getTime())) return '';
+      const dia = String(d.getDate()).padStart(2, '0');
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const ano = d.getFullYear();
+      return `${dia}/${mes}/${ano}`;
+    } catch {
+      return '';
+    }
+  };
+
+  // Função para mover lead para leadsFechados e marcar o original como closed
+  const moveLeadToClosed = async (leadId, leadData = {}) => {
+    try {
+      // Prepare payload com múltiplos formatos (para compatibilidade com o componente de fechados)
+      const payload = {
+        // IDs / nomes
+        ID: leadData.ID ?? leadData.id ?? String(leadId),
+        id: String(leadId),
+        name: leadData.name ?? leadData.nome ?? leadData.Nome ?? leadData.Name ?? '',
+        Name: leadData.Name ?? leadData.name ?? leadData.nome ?? '',
+        // Valores financeiros (preservando nomes esperados pela UI antiga)
+        PremioLiquido: leadData.PremioLiquido ?? leadData.premioLiquido ?? leadData.premioLiquidoFormatted ?? '',
+        Comissao: leadData.Comissao ?? leadData.comissao ?? leadData.Comissao ?? '',
+        Parcelamento: leadData.Parcelamento ?? leadData.parcelamento ?? leadData.parcelamento ?? '',
+        // Seguradora / pagamento / cartão Porto
+        Seguradora: leadData.Seguradora ?? leadData.insurer ?? leadData.insurer ?? '',
+        MeioPagamento: leadData.MeioPagamento ?? leadData.MeioPagamento ?? '',
+        CartaoPortoNovo: leadData.CartaoPortoNovo ?? '',
+        // Datas
+        Data: leadData.Data ?? formatDDMMYYYYFromISO(leadData.createdAt) ?? '',
+        VigenciaInicial: leadData.VigenciaInicial ?? leadData.vigenciaInicial ?? '',
+        VigenciaFinal: leadData.VigenciaFinal ?? leadData.vigenciaFinal ?? '',
+        // Outros
+        Status: leadData.status ?? leadData.Status ?? 'Fechado',
+        Observacao: leadData.observacao ?? leadData.Observacao ?? '',
+        Responsavel: leadData.responsavel ?? leadData.Responsavel ?? '',
+        usuarioId: leadData.usuarioId ?? leadData.usuarioId ?? null,
+        createdAt: leadData.createdAt ?? null,
+        closedAt: serverTimestamp(),
+        // Mantenha o objeto raw para referência
+        raw: { ...(leadData || {}) },
+      };
+
+      // Salva no leadsFechados com o mesmo ID (facilita rastreabilidade)
+      const closedRef = doc(db, 'leadsFechados', String(leadId));
+      await setDoc(closedRef, payload, { merge: true });
+
+      // Marca o lead original como fechado em vez de deletar
+      const originalRef = doc(db, 'leads', String(leadId));
+      const updatePayload = {
+        closed: true,
+        closedAt: serverTimestamp(),
+        status: payload.Status ?? 'Fechado',
+        // opcional: preserve observação/agendamento já atualizados
+      };
+      await updateDoc(originalRef, updatePayload);
+
+      console.log(`Lead ${leadId} copiado para leadsFechados e marcado como closed no leads.`);
+    } catch (err) {
+      console.error('Erro ao mover/marcar lead como fechado:', err);
+      // Não lançar para não interromper o fluxo do usuário
+    }
   };
 
   // Listener em tempo real para leads (onSnapshot sem orderBy para robustez)
@@ -543,6 +619,17 @@ const Leads = ({
       }
 
       await updateDoc(leadRef, dataToUpdate);
+
+      // Se foi marcado Fechado, copiamos para leadsFechados e marcamos original como closed
+      if (finalStatus === 'Fechado') {
+        try {
+          const leadToMove = leadsData.find((l) => String(l.id) === String(leadId)) || {};
+          const mergedLead = { ...leadToMove, ...dataToUpdate };
+          await moveLeadToClosed(leadId, mergedLead);
+        } catch (err) {
+          console.error('Erro ao mover/marcar lead após fechamento:', err);
+        }
+      }
 
       const currentLead = leadsData.find((l) => l.id === leadId);
       const hasNoObservacao = !currentLead || !currentLead.observacao || currentLead.observacao.trim() === '';
