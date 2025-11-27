@@ -163,15 +163,17 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         return '';
     };
 
-    // --- Obtém nome do usuário atual (tenta Firebase Auth e, se não encontrado, tenta sinalizadores em usuarios) ---
-    const getCurrentUserName = () => {
-        // 1) Tenta pegar pelo Firebase Auth (displayName)
+    // --- Obtém info do usuário atual (tenta Firebase Auth e, se não encontrado, tenta sinalizadores em usuarios) ---
+    const getCurrentUserInfo = () => {
         try {
             const auth = getAuth();
             const user = auth && auth.currentUser;
             if (user) {
-                if (user.displayName && String(user.displayName).trim() !== '') return String(user.displayName).trim();
-                if (user.email && String(user.email).trim() !== '') return String(user.email).trim();
+                return {
+                    name: user.displayName ? String(user.displayName).trim() : '',
+                    email: user.email ? String(user.email).trim() : '',
+                    uid: user.uid ? String(user.uid) : ''
+                };
             }
         } catch (e) {
             // ignore
@@ -179,11 +181,17 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
 
         // 2) Tenta encontrar em `usuarios` um usuário marcado como current/isCurrent
         if (Array.isArray(usuarios)) {
-            const found = usuarios.find(u => u.isCurrent || u.current || u.isMe || u.isLogged || u.me);
-            if (found) return found.nome || found.name || '';
+            const found = usuarios.find(u => u.isCurrent || u.current || u.isMe || u.me || u.isLogged || u.email === (found?.email));
+            if (found) {
+                return {
+                    name: found.nome || found.name || '',
+                    email: found.email || found.mail || '',
+                    uid: found.uid || found.id || ''
+                };
+            }
         }
 
-        return ''; // fallback vazio (usuário não identificado)
+        return { name: '', email: '', uid: '' }; // fallback vazio (usuário não identificado)
     };
 
     // --- FIRESTORE: listener e fetch para leadsFechados ---
@@ -268,16 +276,71 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
 
         // Se o usuário não for admin, filtrar apenas os leads transferidos para ele
         if (!isAdmin) {
-            const currentUserName = getCurrentUserName();
-            if (currentUserName) {
-                const currentNorm = normalizarTexto(currentUserName);
-                fechadosAtuais = fechadosAtuais.filter(lead => {
-                    const resp = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? lead.Responsible ?? '';
-                    return resp && normalizarTexto(resp) === currentNorm;
-                });
-            } else {
-                // Usuário comum sem identificação — exibir nenhum lead (segurança)
+            const current = getCurrentUserInfo();
+            const currentNameNorm = normalizarTexto(current.name || '');
+            const currentEmailNorm = normalizarTexto(current.email || '');
+            const currentUid = String(current.uid || '').trim();
+
+            if (!currentNameNorm && !currentEmailNorm && !currentUid) {
+                // Usuário não identificado -> nenhum lead
                 fechadosAtuais = [];
+            } else {
+                fechadosAtuais = fechadosAtuais.filter(lead => {
+                    // possíveis campos que representam o responsável
+                    const resp = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? lead.Responsible ?? lead.transferidoPara ?? lead.assignedTo ?? '';
+                    const respEmail = lead.ResponsavelEmail ?? lead.responsavelEmail ?? lead.emailResponsavel ?? lead.assignedEmail ?? lead.email ?? '';
+                    const respUid = lead.ResponsavelUid ?? lead.responsavelUid ?? lead.responsavelId ?? lead.ResponsavelId ?? lead.responsavel_uid ?? lead.assignedUid ?? '';
+
+                    const respNorm = normalizarTexto(String(resp || ''));
+                    const respEmailNorm = normalizarTexto(String(respEmail || ''));
+
+                    // 1) comparar uid (se presente)
+                    if (currentUid && respUid && String(respUid).trim() !== '' && String(respUid).trim() === String(currentUid)) {
+                        return true;
+                    }
+
+                    // 2) comparar e-mail (se presente)
+                    if (currentEmailNorm && respEmailNorm && respEmailNorm === currentEmailNorm) {
+                        return true;
+                    }
+
+                    // 3) comparar nome com igualdade normalizada ou includes (para aceitar variações)
+                    if (currentNameNorm && respNorm) {
+                        if (respNorm === currentNameNorm) return true;
+                        if (respNorm.includes(currentNameNorm)) return true;
+                        if (currentNameNorm.includes(respNorm) && respNorm.length > 2) return true;
+                    }
+
+                    // 4) mapear `usuarios` pelo email do current user (se existir) e comparar com campo Responsavel
+                    if (Array.isArray(usuarios) && current.email) {
+                        const matchedUser = usuarios.find(u => {
+                            const uEmail = (u.email || u.mail || '').toString().trim();
+                            return uEmail && normalizarTexto(uEmail) === currentEmailNorm;
+                        });
+                        if (matchedUser) {
+                            const matchedNameNorm = normalizarTexto(matchedUser.nome || matchedUser.name || '');
+                            if (matchedNameNorm && respNorm && (respNorm === matchedNameNorm || respNorm.includes(matchedNameNorm))) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 5) verificar outros campos textuais comuns (transferidoPara, assignedTo, transferidoParaNome)
+                    const otherCandidates = [
+                        lead.transferidoPara,
+                        lead.transferidoParaNome,
+                        lead.assignedTo,
+                        lead.assignedName,
+                        lead.transferTo
+                    ];
+                    for (const cand of otherCandidates) {
+                        if (cand && normalizarTexto(String(cand)).includes(currentNameNorm) && currentNameNorm.length > 0) {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                });
             }
         }
 
@@ -444,7 +507,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         }
 
         setFechadosFiltradosInterno(leadsFiltrados);
-    }, [leadsFromFirebase, leads, filtroNome, filtroData, isAdmin]);
+    }, [leadsFromFirebase, leads, filtroNome, filtroData, isAdmin, usuarios]);
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
 
