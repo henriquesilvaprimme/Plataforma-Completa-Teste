@@ -112,7 +112,21 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
             const querySnapshot = await getDocs(q);
             const fetchedLeads = querySnapshot.docs.map(doc => ({
                 ID: doc.id,
-                ...doc.data()
+                name: doc.data().Nome,
+                vehicleModel: doc.data().Modelo,
+                vehicleYearModel: doc.data().AnoModelo,
+                city: doc.data().Cidade,
+                phone: doc.data().Telefone,
+                insuranceType: doc.data().TipoSeguro,
+                Responsavel: doc.data().Responsavel,
+                Seguradora: doc.data().Seguradora,
+                MeioPagamento: doc.data().MeioPagamento,
+                CartaoPortoNovo: doc.data().CartaoPortoNovo,
+                PremioLiquido: doc.data().PremioLiquido,
+                Comissao: doc.data().Comissao,
+                Parcelamento: doc.data().Parcelamento,
+                VigenciaInicial: doc.data().VigenciaInicial,
+                VigenciaFinal: doc.data().VigenciaFinal,
             }));
             setLeadsFirebase(fetchedLeads);
         } catch (error) {
@@ -452,10 +466,10 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         onUpdateDetalhes(id, 'VigenciaFinal', dataFinal);
     };
 
-
     const handleRefresh = () => {
         fetchLeadsFechadosFromFirebase();
     };
+
 
     // --- LÓGICA DE PAGINAÇÃO ---
     const totalPaginas = Math.max(1, Math.ceil(fechadosFiltradosInterno.length / leadsPorPagina));
