@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { db } from './firebase';
+import { doc, setDoc } from 'firebase/firestore';
 
 const CriarUsuario = ({ adicionarUsuario }) => {
   const [usuario, setUsuario] = useState(''); // Será usado como login
@@ -9,7 +11,7 @@ const CriarUsuario = ({ adicionarUsuario }) => {
 
   const navigate = useNavigate();
 
-  const handleCriar = () => {
+  const handleCriar = async () => {
     if (!usuario || !email || !nome || !senha) {
       alert('Preencha todos os campos.');
       return;
@@ -25,34 +27,21 @@ const CriarUsuario = ({ adicionarUsuario }) => {
       status: 'Ativo',
     };
 
-    criarUsuarioFunc(novoUsuario);
+    try {
+      // Grava no Firestore na coleção 'usuarios' usando o id gerado
+      const userRef = doc(db, 'usuarios', String(novoUsuario.id));
+      await setDoc(userRef, novoUsuario);
+    } catch (err) {
+      console.error('Erro ao salvar usuário no Firebase:', err);
+      alert('Erro ao salvar usuário no Firebase. Veja o console para detalhes.');
+      return;
+    }
 
+    // Atualiza lista local via prop e navega
     adicionarUsuario(novoUsuario);
-    
+
     navigate('/usuarios');
   };
-
-  const criarUsuarioFunc = async (lead) => {
-
-    try {
-      const response = await fetch('/api/gas?v=criar_usuario', {
-        method: 'POST',
-        body: JSON.stringify(lead),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      //const result = await response.json();
-      //console.log(result);
-    } catch (error) {
-      console.error('Erro ao enviar lead:', error);
-    }
-  };
-
-  
-
-
-
 
   return (
     <div className="p-6 max-w-xl mx-auto bg-white rounded-xl shadow-md space-y-6">
