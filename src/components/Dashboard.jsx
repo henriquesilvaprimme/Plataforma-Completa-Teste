@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
-import { RefreshCcw, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat, PieChart } from 'lucide-react';
+import { db } from './firebase';
+import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat } from 'lucide-react';
 
 const Dashboard = ({ usuarioLogado }) => {
   const [leadsData, setLeadsData] = useState([]);
   const [renovacoesData, setRenovacoesData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
   const getPrimeiroDiaMes = () => {
     const hoje = new Date();
@@ -328,63 +329,159 @@ const Dashboard = ({ usuarioLogado }) => {
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
   };
 
-  // Estilo para os contadores reduzidos e robustos
-  const boxStyle = {
-    padding: '8px 12px', // Reduzido
-    borderRadius: '8px', // Mais arredondado
-    flex: '1 1 auto', // Flexível para se ajustar
-    color: '#fff',
-    textAlign: 'center',
-    minWidth: '120px', // Largura mínima para evitar quebra excessiva
-    maxWidth: '180px', // Largura máxima para manter compacto
-    boxShadow: '0 4px 8px rgba(0,0,0,0.1)', // Sombra para robustez
+  const navigateSections = (direction) => {
+    if (direction === 'next') {
+      setCurrentSection('renovacoes');
+    } else {
+      setCurrentSection('segurosNovos');
+    }
+  };
+
+  // Estilos para o novo design
+  const containerStyle = {
+    padding: '20px',
+    fontFamily: 'Roboto, sans-serif',
+    backgroundColor: '#f4f6f9',
+    minHeight: '100vh',
+  };
+
+  const headerStyle = {
     display: 'flex',
-    flexDirection: 'column',
     justifyContent: 'space-between',
     alignItems: 'center',
-    margin: '5px', // Espaçamento entre os boxes
+    marginBottom: '30px',
+    borderBottom: '1px solid #e0e0e0',
+    paddingBottom: '15px',
   };
 
   const titleStyle = {
-    fontSize: '14px', // Fonte menor para o título
-    fontWeight: 'normal', // Peso normal
-    marginBottom: '5px',
-    opacity: '0.9',
+    fontSize: '32px',
+    fontWeight: '700',
+    color: '#333',
+    margin: '0',
   };
 
-  const valueStyle = {
-    fontSize: '20px', // Fonte menor para o valor
-    fontWeight: 'bold',
+  const filterContainerStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginBottom: '30px',
+    flexWrap: 'wrap',
+    backgroundColor: '#fff',
+    padding: '15px',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
   };
 
-  const PieChartComponent = ({ percentage }) => {
-    const radius = 30; // Raio menor
+  const inputStyle = {
+    padding: '10px 12px',
+    borderRadius: '6px',
+    border: '1px solid #dcdcdc',
+    fontSize: '14px',
+    color: '#555',
+  };
+
+  const buttonStyle = {
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '10px 18px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '600',
+    transition: 'background-color 0.3s ease',
+  };
+
+  const refreshButtonStyle = {
+    backgroundColor: '#6c757d',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '10px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '40px',
+    height: '40px',
+    transition: 'background-color 0.3s ease',
+  };
+
+  const sectionTitleStyle = {
+    fontSize: '26px',
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: '20px',
+    borderBottom: '1px solid #e0e0e0',
+    paddingBottom: '10px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  };
+
+  const cardGridStyle = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', // Ajustado para 160px
+    gap: '15px',
+    marginBottom: '40px',
+  };
+
+  const cardStyle = {
+    backgroundColor: '#ffffff',
+    borderRadius: '10px',
+    padding: '15px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    minHeight: '100px', // Altura mínima para consistência
+    transition: 'transform 0.2s ease-in-out',
+  };
+
+  const cardTitleStyle = {
+    fontSize: '13px', // Reduzido
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: '8px',
+  };
+
+  const cardValueStyle = {
+    fontSize: '22px', // Reduzido
+    fontWeight: '700',
+    color: '#333',
+  };
+
+  const PieChartComponent = ({ percentage, color = '#4CAF50' }) => {
+    const radius = 30;
     const circumference = 2 * Math.PI * radius;
     const strokeDashoffset = circumference - (percentage / 100) * circumference;
 
     return (
-      <svg width="80" height="80" viewBox="0 0 80 80"> {/* Tamanho menor */}
+      <svg width="80" height="80" viewBox="0 0 80 80" style={{ marginTop: '10px' }}>
         <circle
           cx="40"
           cy="40"
           r={radius}
           fill="transparent"
           stroke="#e0e0e0"
-          strokeWidth="8" // Largura da borda
+          strokeWidth="8"
         />
         <circle
           cx="40"
           cy="40"
           r={radius}
           fill="transparent"
-          stroke="#4CAF50"
+          stroke={color}
           strokeWidth="8"
           strokeDasharray={circumference}
           strokeDashoffset={strokeDashoffset}
           strokeLinecap="round"
           transform="rotate(-90 40 40)"
         />
-        <text x="40" y="45" textAnchor="middle" fontSize="16" fill="#333" fontWeight="bold"> {/* Fonte menor */}
+        <text x="40" y="45" textAnchor="middle" fontSize="16" fill="#333" fontWeight="bold">
           {percentage}%
         </text>
       </svg>
@@ -392,56 +489,49 @@ const Dashboard = ({ usuarioLogado }) => {
   };
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
-      <h1 style={{ fontSize: '32px', fontWeight: 'bold', color: '#333', marginBottom: '20px' }}>Dashboard</h1>
+    <div style={containerStyle}>
+      <div style={headerStyle}>
+        <h1 style={titleStyle}>Dashboard</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {currentSection === 'renovacoes' && (
+            <button
+              onClick={() => navigateSections('prev')}
+              style={{ ...refreshButtonStyle, backgroundColor: '#007bff' }}
+              title="Seção Anterior"
+            >
+              <ArrowLeftCircle size={24} />
+            </button>
+          )}
+          {currentSection === 'segurosNovos' && (
+            <button
+              onClick={() => navigateSections('next')}
+              style={{ ...refreshButtonStyle, backgroundColor: '#007bff' }}
+              title="Próxima Seção"
+            >
+              <ArrowRightCircle size={24} />
+            </button>
+          )}
+        </div>
+      </div>
 
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px', // Espaçamento ajustado
-          marginBottom: '30px',
-          flexWrap: 'wrap',
-        }}
-      >
+      <div style={filterContainerStyle}>
         <input
           type="date"
           value={dataInicio}
           onChange={(e) => setDataInicio(e.target.value)}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '6px',
-            border: '1px solid #ccc',
-            cursor: 'pointer',
-            fontSize: '14px',
-          }}
+          style={inputStyle}
           title="Data de Início"
         />
         <input
           type="date"
           value={dataFim}
           onChange={(e) => setDataFim(e.target.value)}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '6px',
-            border: '1px solid #ccc',
-            cursor: 'pointer',
-            fontSize: '14px',
-          }}
+          style={inputStyle}
           title="Data de Fim"
         />
         <button
           onClick={handleAplicarFiltroData}
-          style={{
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            padding: '8px 16px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: 'bold',
-          }}
+          style={buttonStyle}
         >
           Filtrar
         </button>
@@ -449,19 +539,7 @@ const Dashboard = ({ usuarioLogado }) => {
         <button
           title='Atualizando dados...'
           disabled={isRefreshing || isLoading}
-          style={{
-            backgroundColor: '#6c757d',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            padding: '8px 12px',
-            cursor: 'default',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minWidth: '40px',
-            height: '40px',
-          }}
+          style={refreshButtonStyle}
         >
           {(isRefreshing || isLoading) ? (
             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -475,135 +553,132 @@ const Dashboard = ({ usuarioLogado }) => {
       </div>
 
       {isLoading && (
-        <div style={{ textAlign: 'center', padding: '20px' }}>
-          <p style={{ fontSize: '16px', color: '#555' }}>Carregando dados do dashboard...</p>
+        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+          <p style={{ fontSize: '18px', color: '#555' }}>Carregando dados do dashboard...</p>
         </div>
       )}
 
-      {!isLoading && (
+      {!isLoading && currentSection === 'segurosNovos' && (
         <>
-          {/* Seção de Seguros Novos */}
-          <h2 style={{ marginTop: '40px', marginBottom: '15px', fontSize: '24px', fontWeight: 'bold', color: '#333', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>Seguros Novos</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: '10px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#424242' }}>
-              <h3 style={titleStyle}>Total de Leads</h3>
-              <p style={valueStyle}>{dashboardStats.totalLeads}</p>
+          <h2 style={sectionTitleStyle}>Seguros Novos</h2>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f2f7' }}>
+              <h3 style={cardTitleStyle}>Total de Leads</h3>
+              <p style={cardValueStyle}>{dashboardStats.totalLeads}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#9C27B0' }}>
-              <h3 style={titleStyle}>Taxa de Conversão</h3>
-              <p style={valueStyle}>{dashboardStats.taxaConversaoLeads}%</p>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Vendas</h3>
+              <p style={cardValueStyle}>{dashboardStats.vendas}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
-              <h3 style={titleStyle}>Vendas</h3>
-              <p style={valueStyle}>{dashboardStats.vendas}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#ffe0b2' }}>
+              <h3 style={cardTitleStyle}>Em Contato</h3>
+              <p style={cardValueStyle}>{dashboardStats.emContato}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#F44336' }}>
-              <h3 style={titleStyle}>Leads Perdidos</h3>
-              <p style={valueStyle}>{dashboardStats.perdidos}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#ffcdd2' }}>
+              <h3 style={cardTitleStyle}>Sem Contato</h3>
+              <p style={cardValueStyle}>{dashboardStats.semContato}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF9800' }}>
-              <h3 style={titleStyle}>Em Contato</h3>
-              <p style={valueStyle}>{dashboardStats.emContato}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#f3e5f5' }}>
+              <h3 style={cardTitleStyle}>Leads Perdidos</h3>
+              <p style={cardValueStyle}>{dashboardStats.perdidos}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#9E9E9E' }}>
-              <h3 style={titleStyle}>Sem Contato</h3>
-              <p style={valueStyle}>{dashboardStats.semContato}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#e1f5fe' }}>
+              <h3 style={cardTitleStyle}>Taxa de Conversão</h3>
+              <p style={cardValueStyle}>{dashboardStats.taxaConversaoLeads}%</p>
             </div>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: '10px', marginTop: '20px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#003366' }}>
-              <h3 style={titleStyle}>Porto Seguro</h3>
-              <p style={valueStyle}>{dashboardStats.portoSeguroLeads}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#87CEFA' }}>
-              <h3 style={titleStyle}>Azul Seguros</h3>
-              <p style={valueStyle}>{dashboardStats.azulSegurosLeads}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF8C00' }}>
-              <h3 style={titleStyle}>Itau Seguros</h3>
-              <p style={valueStyle}>{dashboardStats.itauSegurosLeads}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
-              <h3 style={titleStyle}>Demais Seguradoras</h3>
-              <p style={valueStyle}>{dashboardStats.demaisSeguradorasLeads}</p>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: '10px', marginTop: '20px', marginBottom: '40px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
-              <h3 style={titleStyle}>Total Prêmio Líquido</h3>
-              <p style={valueStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f7fa' }}>
+              <h3 style={cardTitleStyle}>Total Prêmio Líquido</h3>
+              <p style={cardValueStyle}>
                 {dashboardStats.totalPremioLiquidoLeads.toLocaleString('pt-BR', {
                   style: 'currency',
                   currency: 'BRL',
                 })}
               </p>
             </div>
-              
-            <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
-              <h3 style={titleStyle}>Média Comissão</h3>
-              <p style={valueStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Média Comissão</h3>
+              <p style={cardValueStyle}>
                 {dashboardStats.comissaoMediaGlobalLeads.replace('.', ',')}%
               </p>
             </div>
           </div>
 
-          {/* Seção de Renovações */}
-          <h2 style={{ marginTop: '40px', marginBottom: '15px', fontSize: '24px', fontWeight: 'bold', color: '#333', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>Renovações</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: '10px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#673AB7' }}>
-              <h3 style={titleStyle}>Total de Renovações</h3>
-              <p style={valueStyle}>{dashboardStats.totalRenovacoes}</p>
+          <h3 style={{ fontSize: '20px', fontWeight: '600', color: '#555', marginBottom: '15px', borderBottom: '1px dashed #e0e0e0', paddingBottom: '8px' }}>Seguradoras (Novos)</h3>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#bbdefb' }}>
+              <h3 style={cardTitleStyle}>Porto Seguro</h3>
+              <p style={cardValueStyle}>{dashboardStats.portoSeguroLeads}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#2196F3' }}>
-              <h3 style={titleStyle}>Renovados</h3>
-              <p style={valueStyle}>{dashboardStats.renovados}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#c8e6c9' }}>
+              <h3 style={cardTitleStyle}>Azul Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.azulSegurosLeads}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF5722' }}>
-              <h3 style={titleStyle}>Renovações Perdidas</h3>
-              <p style={valueStyle}>{dashboardStats.renovacoesPerdidas}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#ffecb3' }}>
+              <h3 style={cardTitleStyle}>Itau Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.itauSegurosLeads}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FFC107', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-              <h3 style={titleStyle}>Taxa de Renovação</h3>
-              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: '10px', marginTop: '20px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#003366' }}>
-              <h3 style={titleStyle}>Porto Seguro Renov.</h3>
-              <p style={valueStyle}>{dashboardStats.portoSeguroRenovacoes}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#87CEFA' }}>
-              <h3 style={titleStyle}>Azul Seguros Renov.</h3>
-              <p style={valueStyle}>{dashboardStats.azulSegurosRenovacoes}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF8C00' }}>
-              <h3 style={titleStyle}>Itau Seguros Renov.</h3>
-              <p style={valueStyle}>{dashboardStats.itauSegurosRenovacoes}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
-              <h3 style={titleStyle}>Demais Seguradoras Renov.</h3>
-              <p style={valueStyle}>{dashboardStats.demaisSeguradorasRenovacoes}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#f8bbd0' }}>
+              <h3 style={cardTitleStyle}>Demais Seguradoras</h3>
+              <p style={cardValueStyle}>{dashboardStats.demaisSeguradorasLeads}</p>
             </div>
           </div>
+        </>
+      )}
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: '10px', marginTop: '20px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#00BCD4' }}>
-              <h3 style={titleStyle}>Prêmio Líquido Renovados</h3>
-              <p style={valueStyle}>
+      {!isLoading && currentSection === 'renovacoes' && (
+        <>
+          <h2 style={sectionTitleStyle}>Renovações</h2>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e3f2fd' }}>
+              <h3 style={cardTitleStyle}>Total de Renovações</h3>
+              <p style={cardValueStyle}>{dashboardStats.totalRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Renovados</h3>
+              <p style={cardValueStyle}>{dashboardStats.renovados}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffe0b2' }}>
+              <h3 style={cardTitleStyle}>Renovações Perdidas</h3>
+              <p style={cardValueStyle}>{dashboardStats.renovacoesPerdidas}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#fce4ec', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+              <h3 style={cardTitleStyle}>Taxa de Renovação</h3>
+              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} color="#673AB7" />
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f7fa' }}>
+              <h3 style={cardTitleStyle}>Prêmio Líquido Renovados</h3>
+              <p style={cardValueStyle}>
                 {dashboardStats.premioLiquidoRenovados.toLocaleString('pt-BR', {
                   style: 'currency',
                   currency: 'BRL',
                 })}
               </p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#8BC34A' }}>
-              <h3 style={titleStyle}>Média Comissão Renovados</h3>
-              <p style={valueStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Média Comissão Renovados</h3>
+              <p style={cardValueStyle}>
                 {dashboardStats.mediaComissaoRenovados.replace('.', ',')}%
               </p>
+            </div>
+          </div>
+
+          <h3 style={{ fontSize: '20px', fontWeight: '600', color: '#555', marginBottom: '15px', borderBottom: '1px dashed #e0e0e0', paddingBottom: '8px' }}>Seguradoras (Renovações)</h3>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#bbdefb' }}>
+              <h3 style={cardTitleStyle}>Porto Seguro</h3>
+              <p style={cardValueStyle}>{dashboardStats.portoSeguroRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#c8e6c9' }}>
+              <h3 style={cardTitleStyle}>Azul Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.azulSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffecb3' }}>
+              <h3 style={cardTitleStyle}>Itau Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.itauSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#f8bbd0' }}>
+              <h3 style={cardTitleStyle}>Demais Seguradoras</h3>
+              <p style={cardValueStyle}>{dashboardStats.demaisSeguradorasRenovacoes}</p>
             </div>
           </div>
         </>
