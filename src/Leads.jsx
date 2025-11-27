@@ -34,6 +34,22 @@ const Leads = ({
   const [showNotification, setShowNotification] = useState(false);
   const [hasScheduledToday, setHasScheduledToday] = useState(false);
 
+  // NOVOS STATES: modal de fechamento
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
+  const [closingLead, setClosingLead] = useState(null);
+
+  // campos do modal
+  const [modalNome, setModalNome] = useState('');
+  const [modalSeguradora, setModalSeguradora] = useState('');
+  const [modalMeioPagamento, setModalMeioPagamento] = useState('');
+  const [modalCartaoPortoNovo, setModalCartaoPortoNovo] = useState(false);
+  const [modalPremioLiquido, setModalPremioLiquido] = useState('');
+  const [modalComissao, setModalComissao] = useState('');
+  const [modalParcelamento, setModalParcelamento] = useState('');
+  const [modalVigenciaInicial, setModalVigenciaInicial] = useState('');
+  const [modalVigenciaFinal, setModalVigenciaFinal] = useState('');
+  const [isSubmittingClose, setIsSubmittingClose] = useState(false);
+
   // Normaliza um documento do Firestore para o formato esperado pelo React
   const normalizeLead = (docId, data = {}) => {
     const safe = (v) => (v === undefined || v === null ? '' : v);
@@ -165,10 +181,9 @@ const Leads = ({
     }
   };
 
-  // Move lead para leadsFechados com apenas os campos portugueses solicitados
+  // Move lead para leadsFechados (mantive a função antiga caso queira usar)
   const moveLeadToClosed = async (leadId, leadData = {}) => {
     try {
-      // Extrai valores com várias alternativas (para garantir que pegue o valor correto)
       const nomeVal =
         leadData.Nome ??
         leadData.nome ??
@@ -206,7 +221,6 @@ const Leads = ({
         leadData.insuranceType ??
         '';
 
-      // Monta payload contendo somente os campos em PT + ID + usuarioId + campos de venda vazios
       const payload = {
         ID: leadData.ID ?? leadData.id ?? String(leadId),
         id: String(leadId),
@@ -217,7 +231,6 @@ const Leads = ({
         Telefone: telefoneVal,
         TipoSeguro: tipoSeguroVal,
         usuarioId: leadData.usuarioId ?? null,
-        // Campos de venda — intencionalmente vazios para preenchimento posterior
         Seguradora: '',
         MeioPagamento: '',
         CartaoPortoNovo: '',
@@ -226,7 +239,6 @@ const Leads = ({
         Parcelamento: '',
         VigenciaInicial: '',
         VigenciaFinal: '',
-        // Metadata mínimo
         Status: leadData.status ?? leadData.Status ?? 'Fechado',
         Observacao: leadData.observacao ?? leadData.Observacao ?? '',
         Responsavel: leadData.responsavel ?? leadData.Responsavel ?? '',
@@ -235,11 +247,9 @@ const Leads = ({
         closedAt: serverTimestamp(),
       };
 
-      // Salva sem merge (substitui) para garantir que os campos de venda fiquem vazios
       const closedRef = doc(db, 'leadsFechados', String(leadId));
       await setDoc(closedRef, payload);
 
-      // Marca o lead original como fechado
       const originalRef = doc(db, 'leads', String(leadId));
       const updatePayload = {
         closed: true,
@@ -249,10 +259,10 @@ const Leads = ({
       await updateDoc(originalRef, updatePayload);
 
       console.log(
-        `Lead ${leadId} copiado para leadsFechados com campos especificados e marcado como closed no leads.`
+        `Lead ${leadId} copiado para leadsFechados (via moveLeadToClosed) e marcado como closed no leads.`
       );
     } catch (err) {
-      console.error('Erro ao mover/marcar lead como fechado:', err);
+      console.error('Erro ao mover/marcar lead como fechado (moveLeadToClosed):', err);
     }
   };
 
@@ -643,6 +653,18 @@ const Leads = ({
   };
 
   const handleConfirmStatus = async (leadId, novoStatus, phoneOrDate) => {
+    // Se for Fechado -> abrir modal de fechamento
+    if (novoStatus === 'Fechado') {
+      const lead = leadsData.find((l) => String(l.id) === String(leadId));
+      if (!lead) {
+        alert('Lead não encontrada para fechamento.');
+        return;
+      }
+      openClosingModal(lead);
+      return;
+    }
+
+    // fluxo antigo para outros statuses
     if (typeof saveLocalChange === 'function') {
       saveLocalChange({
         id: leadId,
@@ -705,17 +727,6 @@ const Leads = ({
 
       await updateDoc(leadRef, dataToUpdate);
 
-      // Se foi marcado Fechado, copiamos para leadsFechados e marcamos original como closed
-      if (finalStatus === 'Fechado') {
-        try {
-          const leadToMove = leadsData.find((l) => String(l.id) === String(leadId)) || {};
-          const mergedLead = { ...leadToMove, ...dataToUpdate };
-          await moveLeadToClosed(leadId, mergedLead);
-        } catch (err) {
-          console.error('Erro ao mover/marcar lead após fechamento:', err);
-        }
-      }
-
       const currentLead = leadsData.find((l) => l.id === leadId);
       const hasNoObservacao =
         !currentLead || !currentLead.observacao || currentLead.observacao.trim() === '';
@@ -735,6 +746,135 @@ const Leads = ({
       alert('Erro ao atualizar status. Veja o console.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // ---------------- Modal: funções auxiliares ----------------
+  const toDateInputValue = (date = new Date()) => {
+    const d = new Date(date);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${yyyy}-${mm}-${dd}`; // formato para <input type="date">
+  };
+
+  const addOneYearDateInputValue = (date = new Date()) => {
+    const d = new Date(date);
+    d.setFullYear(d.getFullYear() + 1);
+    return toDateInputValue(d);
+  };
+
+  const openClosingModal = (lead) => {
+    setClosingLead(lead);
+    setModalNome(lead.Nome || lead.name || lead.nome || '');
+    setModalSeguradora(lead.Seguradora || lead.insurer || '');
+    setModalMeioPagamento(lead.MeioPagamento || lead.MeioPagamento || '');
+    setModalCartaoPortoNovo(Boolean(lead.CartaoPortoNovo));
+    setModalPremioLiquido(lead.PremioLiquido ?? lead.premioLiquido ?? '');
+    setModalComissao(lead.Comissao ?? lead.comissao ?? '');
+    setModalParcelamento(lead.Parcelamento ?? lead.parcelamento ?? '');
+    const hoje = new Date();
+    setModalVigenciaInicial(toDateInputValue(hoje));
+    setModalVigenciaFinal(addOneYearDateInputValue(hoje));
+    setIsClosingModalOpen(true);
+  };
+
+  const closeClosingModal = () => {
+    setIsClosingModalOpen(false);
+    setClosingLead(null);
+    setIsSubmittingClose(false);
+  };
+
+  // Ao submeter o fechamento (Concluir Venda)
+  const handleConcluirVenda = async () => {
+    if (!closingLead) return;
+    setIsSubmittingClose(true);
+
+    try {
+      const leadId = String(closingLead.id);
+      // Converte datas do input para ISO strings
+      const vigIniISO = modalVigenciaInicial ? new Date(`${modalVigenciaInicial}T00:00:00`).toISOString() : '';
+      const vigFinISO = modalVigenciaFinal ? new Date(`${modalVigenciaFinal}T00:00:00`).toISOString() : '';
+
+      // Monta payload para leadsFechados (campos em português conforme pedido)
+      const payload = {
+        ID: closingLead.ID ?? closingLead.id ?? leadId,
+        id: leadId,
+        Nome: modalNome,
+        name: modalNome,
+        Modelo: closingLead.Modelo ?? closingLead.vehicleModel ?? '',
+        AnoModelo: closingLead.AnoModelo ?? closingLead.vehicleYearModel ?? '',
+        Cidade: closingLead.Cidade ?? closingLead.city ?? '',
+        Telefone: closingLead.Telefone ?? closingLead.phone ?? '',
+        TipoSeguro: closingLead.TipoSeguro ?? closingLead.insuranceType ?? '',
+        usuarioId: closingLead.usuarioId ?? null,
+        Seguradora: modalSeguradora || '',
+        MeioPagamento: modalMeioPagamento || '',
+        CartaoPortoNovo: modalCartaoPortoNovo ? 'Sim' : 'Não',
+        PremioLiquido: modalPremioLiquido || '',
+        Comissao: modalComissao || '',
+        Parcelamento: modalParcelamento || '',
+        VigenciaInicial: vigIniISO || '',
+        VigenciaFinal: vigFinISO || '',
+        Status: 'Fechado',
+        Observacao: closingLead.observacao ?? closingLead.Observacao ?? '',
+        Responsavel: closingLead.responsavel ?? closingLead.Responsavel ?? usuarioLogado?.nome ?? '',
+        Data: closingLead.Data ?? formatDDMMYYYYFromISO(closingLead.createdAt) ?? '',
+        createdAt: closingLead.createdAt ?? null,
+        closedAt: serverTimestamp(),
+      };
+
+      // Salva em leadsFechados com ID fixo igual ao leadId (document id do Firestore)
+      const closedRef = doc(db, 'leadsFechados', leadId);
+      await setDoc(closedRef, payload);
+
+      // Atualiza lead original: status, closedAt e campos de venda/nome
+      const originalRef = doc(db, 'leads', leadId);
+      const updatePayload = {
+        status: 'Fechado',
+        closedAt: serverTimestamp(),
+        Seguradora: modalSeguradora || '',
+        PremioLiquido: modalPremioLiquido || '',
+        Comissao: modalComissao || '',
+        Parcelamento: modalParcelamento || '',
+        MeioPagamento: modalMeioPagamento || '',
+        CartaoPortoNovo: modalCartaoPortoNovo ? 'Sim' : 'Não',
+        VigenciaInicial: vigIniISO || '',
+        VigenciaFinal: vigFinISO || '',
+        Nome: modalNome,
+        name: modalNome,
+        insurerConfirmed: true,
+      };
+
+      // aplica também saveLocalChange para manter sincronização local se existir a função
+      if (typeof saveLocalChange === 'function') {
+        saveLocalChange({
+          id: leadId,
+          type: 'alterar_seguradora',
+          data: {
+            leadId,
+            Seguradora: modalSeguradora || '',
+            PremioLiquido: modalPremioLiquido || '',
+            Comissao: modalComissao || '',
+            Parcelamento: modalParcelamento || '',
+            MeioPagamento: modalMeioPagamento || '',
+            CartaoPortoNovo: modalCartaoPortoNovo ? 'Sim' : 'Não',
+            VigenciaInicial: vigIniISO || '',
+            VigenciaFinal: vigFinISO || '',
+            Nome: modalNome,
+          },
+        });
+      }
+
+      await updateDoc(originalRef, updatePayload);
+
+      // sucesso: fecha modal e deixa o listener atualizar a lista automaticamente
+      closeClosingModal();
+      alert('Venda concluída e registrada em leadsFechados com sucesso.');
+    } catch (err) {
+      console.error('Erro ao concluir venda:', err);
+      alert('Erro ao concluir venda. Veja o console para detalhes.');
+      setIsSubmittingClose(false);
     }
   };
 
@@ -1012,6 +1152,84 @@ const Leads = ({
           </>
         )}
       </div>
+
+      {/* Modal de Concluir Venda */}
+      {isClosingModalOpen && closingLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 relative">
+            <h2 className="text-xl font-bold mb-4">Concluir Venda</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">ID (fixo)</label>
+                <input readOnly value={String(closingLead.id)} className="mt-1 w-full p-2 border rounded bg-gray-100 text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Nome</label>
+                <input value={modalNome} onChange={(e) => setModalNome(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Seguradora</label>
+                <input value={modalSeguradora} onChange={(e) => setModalSeguradora(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Meio de pagamento</label>
+                <input value={modalMeioPagamento} onChange={(e) => setModalMeioPagamento(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div className="col-span-1 md:col-span-2 flex items-center gap-3">
+                <label className="block text-sm font-semibold text-gray-700">Cartão Porto Seguro Novo?</label>
+                <input type="checkbox" checked={modalCartaoPortoNovo} onChange={(e) => setModalCartaoPortoNovo(e.target.checked)} className="ml-2" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Prêmio Líquido</label>
+                <input value={modalPremioLiquido} onChange={(e) => setModalPremioLiquido(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Comissão</label>
+                <input value={modalComissao} onChange={(e) => setModalComissao(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Parcelamento</label>
+                <input value={modalParcelamento} onChange={(e) => setModalParcelamento(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Vigência Inicial</label>
+                <input type="date" value={modalVigenciaInicial} onChange={(e) => {
+                  setModalVigenciaInicial(e.target.value);
+                  // se o usuário alterar a inicial, atualiza a final automaticamente para +1 ano
+                  try {
+                    const d = new Date(`${e.target.value}T00:00:00`);
+                    d.setFullYear(d.getFullYear() + 1);
+                    setModalVigenciaFinal(toDateInputValue(d));
+                  } catch { }
+                }} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700">Vigência Final</label>
+                <input type="date" value={modalVigenciaFinal} onChange={(e) => setModalVigenciaFinal(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={closeClosingModal} disabled={isSubmittingClose} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">
+                Cancelar
+              </button>
+              <button onClick={handleConcluirVenda} disabled={isSubmittingClose} className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700">
+                {isSubmittingClose ? 'Processando...' : 'Concluir Venda'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
