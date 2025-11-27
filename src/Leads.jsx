@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Lead from './components/Lead';
 import { RefreshCcw, Bell, Search } from 'lucide-react';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteField } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
 
 const Leads = ({
@@ -93,6 +93,7 @@ const Leads = ({
     const today = new Date().toLocaleDateString('pt-BR');
 
     leadsData.forEach((lead) => {
+      // Ignorar Fechado e Perdido do total Geral (pendentes)
       if (lead.status !== 'Fechado' && lead.status !== 'Perdido') {
         todosCount++;
       }
@@ -101,8 +102,8 @@ const Leads = ({
         emContatoCount++;
       } else if (lead.status === 'Sem Contato') {
         semContatoCount++;
-      } else if (lead.status && lead.status.startsWith('Agendado')) {
-        const statusDateStr = lead.status.split(' - ')[1];
+      } else if (lead.status?.startsWith('Agendado')) {
+        const statusDateStr = lead.status?.split(' - ')[1];
         if (statusDateStr) {
           const [dia, mes, ano] = statusDateStr.split('/');
           const statusDateFormatted = new Date(`${ano}-${mes}-${dia}T00:00:00`).toLocaleDateString('pt-BR');
@@ -189,12 +190,12 @@ const Leads = ({
       if (filtroStatus === 'Agendado') {
         const today = new Date();
         const todayFormatted = today.toLocaleDateString('pt-BR');
-        const statusDateStr = lead.status ? lead.status.split(' - ')[1] : null;
+        const statusDateStr = lead.status?.split(' - ')[1];
         if (!statusDateStr) return false;
         const [dia, mes, ano] = statusDateStr.split('/');
         const statusDate = new Date(`${ano}-${mes}-${dia}T00:00:00`);
         const statusDateFormatted = statusDate.toLocaleDateString('pt-BR');
-        return lead.status && lead.status.startsWith('Agendado') && statusDateFormatted === todayFormatted;
+        return lead.status?.startsWith('Agendado') && statusDateFormatted === todayFormatted;
       }
       return lead.status === filtroStatus;
     }
@@ -380,30 +381,102 @@ const Leads = ({
     setIsEditingObservacao((prev) => ({ ...prev, [leadId]: true }));
   };
 
-  const handleConfirmStatus = async (leadId, novoStatus, phone) => {
+  // Função utilitária para validar dd/mm/yyyy
+  const isValidDDMMYYYY = (str) => {
+    if (!str || typeof str !== 'string') return false;
+    const parts = str.split('/');
+    if (parts.length !== 3) return false;
+    const [d, m, y] = parts.map((p) => parseInt(p, 10));
+    if (!d || !m || !y) return false;
+    const dt = new Date(y, m - 1, d);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+  };
+
+  // Atualiza status no Firebase e também salva observação/agendamento se necessário
+  const handleConfirmStatus = async (leadId, novoStatus, phoneOrDate) => {
     // Salva localmente a alteração de status para retry/sync futuro (TTL gerenciado pelo App)
     if (typeof saveLocalChange === 'function') {
       saveLocalChange({
         id: leadId,
         type: 'atualizarStatus',
-        data: { leadId, status: novoStatus, phone: phone || null },
+        data: { leadId, status: novoStatus, phone: phoneOrDate || null },
       });
     }
 
     // Primeiro notifica o parent para lógica de UI/estado global
-    onUpdateStatus(leadId, novoStatus, phone);
+    try {
+      onUpdateStatus(leadId, novoStatus, phoneOrDate);
+    } catch (err) {
+      // não falhar se parent não estiver presente
+      console.warn('onUpdateStatus disparado, mas houve erro/ausência:', err);
+    }
 
-    // Atualiza o campo status (e opcionalmente phone) no Firebase
+    setIsLoading(true);
     try {
       const leadRef = doc(db, 'leads', leadId);
-      const dataToUpdate = { status: novoStatus };
-      if (phone) dataToUpdate.phone = phone;
+
+      // Determinar status final e data de agendamento (dd/mm/yyyy) se aplicável
+      let finalStatus = novoStatus;
+      let agendamento = null;
+
+      // Caso o componente envie 'Agendar' com uma data no terceiro argumento (phoneOrDate),
+      // ou envie 'Agendado - dd/mm/yyyy' como novoStatus, tratamos ambos.
+      if (novoStatus === 'Agendar') {
+        // Se o terceiro argumento contém a data no formato dd/mm/yyyy, usa-a
+        if (isValidDDMMYYYY(phoneOrDate)) {
+          agendamento = phoneOrDate;
+          finalStatus = `Agendado - ${agendamento}`;
+        } else {
+          // Se não vier data, marcamos apenas como 'Agendado' (sem data)
+          finalStatus = 'Agendado';
+          agendamento = null;
+        }
+      } else if (novoStatus?.startsWith('Agendado')) {
+        // Se já vem com a data em novoStatus (ex: 'Agendado - 25/12/2025')
+        const possibleDate = novoStatus.split(' - ')[1];
+        if (isValidDDMMYYYY(possibleDate)) {
+          agendamento = possibleDate;
+          finalStatus = novoStatus;
+        } else {
+          // Se não houver data válida, mantemos o texto como veio e sem agendamento
+          finalStatus = novoStatus;
+          agendamento = null;
+        }
+      } else {
+        // Outros status: Fechado, Perdido, Em Contato, Sem Contato, etc.
+        finalStatus = novoStatus;
+        agendamento = null;
+      }
+
+      // Prepara objeto de atualização
+      const dataToUpdate = { status: finalStatus };
+
+      // Se tiver phone (número) passado e quiser salvar como 'phone' ou 'telefone'
+      if (phoneOrDate && typeof phoneOrDate === 'string' && !isValidDDMMYYYY(phoneOrDate)) {
+        // assumimos que é telefone
+        dataToUpdate.phone = phoneOrDate;
+      }
+
+      // Se houver observação atual no state, atualizamos também
+      const observacaoAtual = observacoes[leadId];
+      if (observacaoAtual && observacaoAtual.trim() !== '') {
+        dataToUpdate.observacao = observacaoAtual;
+      }
+
+      // Atualiza campo de agendamento (salva dd/mm/yyyy) ou remove se for null
+      if (agendamento) {
+        dataToUpdate.agendamento = agendamento;
+      } else {
+        // Se já existia um campo agendamento e agora não há, limpamos para null
+        dataToUpdate.agendamento = null;
+      }
+
       await updateDoc(leadRef, dataToUpdate);
 
       const currentLead = leadsData.find((l) => l.id === leadId);
       const hasNoObservacao = !currentLead || !currentLead.observacao || currentLead.observacao.trim() === '';
 
-      if ((novoStatus === 'Em Contato' || novoStatus === 'Sem Contato' || novoStatus.startsWith('Agendado')) && hasNoObservacao) {
+      if ((finalStatus === 'Em Contato' || finalStatus === 'Sem Contato' || finalStatus?.startsWith('Agendado')) && hasNoObservacao) {
         setIsEditingObservacao((prev) => ({ ...prev, [leadId]: true }));
       } else {
         setIsEditingObservacao((prev) => ({ ...prev, [leadId]: false }));
@@ -413,6 +486,8 @@ const Leads = ({
     } catch (error) {
       console.error('Erro ao atualizar status no Firebase:', error);
       alert('Erro ao atualizar status. Veja o console.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -561,7 +636,7 @@ const Leads = ({
           <>
             {leadsPagina.map((lead) => {
               const responsavel = usuarios ? usuarios.find((u) => u.nome === lead.responsavel) : null;
-              const hasObservacaoSection = (lead.status === 'Em Contato' || lead.status === 'Sem Contato' || (lead.status && lead.status.startsWith('Agendado')));
+              const hasObservacaoSection = (lead.status === 'Em Contato' || lead.status === 'Sem Contato' || (lead.status && lead.status.startsWith && lead.status.startsWith('Agendado')));
 
               return (
                 <div
