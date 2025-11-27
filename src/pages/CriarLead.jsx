@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom'; // Mantido, embora não usado no snippet fornecido
 
 const CriarLead = () => {
@@ -27,23 +27,23 @@ const CriarLead = () => {
   useEffect(() => {
     const buscarNomesResponsaveis = async () => {
       try {
-        // Para listar usuários, você já usa '?v=pegar_usuario' no App.js, então vamos usá-lo aqui também.
-        const response = await fetch(`${GOOGLE_SHEETS_BASE_URL}?v=pegar_usuario`, {
-            mode: 'cors' // Para requisições GET, é geralmente seguro usar 'cors' se o Apps Script permitir.
-        });
-        const data = await response.json();
-        
-        if (Array.isArray(data)) {
-          // Filtra para garantir que apenas nomes válidos sejam adicionados e remove duplicatas, se houver
-          const nomes = data.map(user => user.nome).filter(Boolean); 
-          setNomesResponsaveis(nomes);
-        } else {
-          setNomesResponsaveis([]);
-          console.warn('Resposta inesperada ao buscar responsáveis:', data);
-        }
+        // Busca usuários diretamente do Firestore (coleção "usuarios")
+        const snapshot = await getDocs(collection(db, 'usuarios'));
+        const nomes = snapshot.docs
+          .map(doc => {
+            const d = doc.data() || {};
+            // tenta várias chaves comuns
+            return d.nome ?? d.Nome ?? d.name ?? d.usuario ?? '';
+          })
+          .filter(Boolean);
+
+        // Remove duplicatas e ordena alfabeticamente
+        const unique = Array.from(new Set(nomes)).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+
+        setNomesResponsaveis(unique);
       } catch (error) {
-        console.error('Erro ao buscar nomes de responsáveis:', error);
-        setMensagemFeedback('❌ Erro ao carregar a lista de responsáveis. Verifique o console e o Apps Script.');
+        console.error('Erro ao buscar nomes de responsáveis do Firestore:', error);
+        setMensagemFeedback('❌ Erro ao carregar a lista de responsáveis. Verifique o console.');
       }
     };
 
@@ -109,20 +109,19 @@ const CriarLead = () => {
   };
 
   const criarLeadFunc = async (lead) => {
-  try {
-    const docRef = await addDoc(collection(db, "leads"), {
-      ...lead,
-      criadoEm: serverTimestamp()
-    });
+    try {
+      const docRef = await addDoc(collection(db, "leads"), {
+        ...lead,
+        criadoEm: serverTimestamp()
+      });
 
-    console.log("Lead salvo no Firebase com ID:", docRef.id);
+      console.log("Lead salvo no Firebase com ID:", docRef.id);
 
-  } catch (error) {
-    console.error("Erro ao salvar lead no Firebase:", error);
-    throw error;
-  }
-};
-
+    } catch (error) {
+      console.error("Erro ao salvar lead no Firebase:", error);
+      throw error;
+    }
+  };
 
   return (
     <div className="p-6 max-w-xl mx-auto bg-white rounded-xl shadow-md space-y-6">
