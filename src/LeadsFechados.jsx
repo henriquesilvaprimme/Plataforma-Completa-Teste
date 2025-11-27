@@ -352,28 +352,16 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
 
     // --------------------------
     // VISIBILITY: apenas admin vê todos; usuário vê apenas os fechados atribuidos a ele
+    // (Lógica adaptada exatamente da parte de visibilidade do Leads.jsx)
     // --------------------------
     const getCurrentUserFromStorage = () => {
-        // Tenta diversas chaves no localStorage e sessionStorage para ser mais resiliente
-        const keys = ['user', 'usuario', 'usuarioLogado', 'currentUser', 'loggedUser'];
-        for (const storage of [localStorage, sessionStorage]) {
-            try {
-                for (const k of keys) {
-                    const raw = storage.getItem(k);
-                    if (!raw) continue;
-                    try {
-                        const parsed = JSON.parse(raw);
-                        if (parsed && typeof parsed === 'object') return parsed;
-                    } catch (e) {
-                        // se não é JSON, retorna string enrolada num objeto simples
-                        return { usuario: raw, nome: raw };
-                    }
-                }
-            } catch (e) {
-                // ignore storage access errors
-            }
+        try {
+            const raw = localStorage.getItem('user');
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (e) {
+            return null;
         }
-        return null;
     };
 
     const canViewLead = (lead) => {
@@ -381,49 +369,23 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         const user = getCurrentUserFromStorage();
         if (!user) return false;
 
-        const userIdStr = String(user.id ?? user.ID ?? user.userId ?? user.uid ?? '').trim();
-        const userNameRaw = String(user.nome ?? user.name ?? user.usuario ?? user.login ?? '').trim();
-        const userName = normalizarTexto(userNameRaw);
+        // user id values could be in different keys
+        const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
+        const userNome = String(user.nome ?? user.name ?? user.usuario ?? '').trim().toLowerCase();
 
-        // Check lead responsavel name (normalizado) - allow contains (so "João Silva" matches "joao")
-        const leadResponsavelRaw = String(lead.Responsavel ?? lead.responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '').trim();
-        const leadResponsavel = normalizarTexto(leadResponsavelRaw);
-        if (leadResponsavel && userName && leadResponsavel === userName) return true;
-        if (leadResponsavel && userName && leadResponsavel.includes(userName)) return true;
-        if (leadResponsavel && userName && userName.includes(leadResponsavel)) return true;
+        // lead.usuarioId can be number or string
+        const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
+        if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
 
-        // Check usuarioId match
-        const leadUsuarioIdRaw = lead.usuarioId ?? lead.raw?.usuarioId ?? lead.raw?.userId ?? lead.raw?.user ?? '';
-        const leadUsuarioId = String(leadUsuarioIdRaw ?? '').trim();
-        if (leadUsuarioId && userIdStr && leadUsuarioId === userIdStr) return true;
+        // Compare responsavel / Responsavel names
+        const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '').trim().toLowerCase();
+        if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
 
-        // Check raw.usuario (login) against user.usuario/login
-        const leadUsuarioLogin = String(lead.raw?.usuario ?? lead.raw?.user ?? lead.raw?.login ?? '').trim();
-        const userLogin = String(user.usuario ?? user.login ?? '').trim();
+        // Fallback: raw.usuario/login match
+        const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
+        const userLogin = String(user.usuario ?? '').trim();
         if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
 
-        // Também tente comparar pelo nome contra lista de usuarios passada como prop (se houver)
-        if (usuarios && Array.isArray(usuarios)) {
-            const found = usuarios.find(u => {
-                const uname = normalizarTexto(String(u.nome ?? u.name ?? '').trim());
-                return uname && userName && (uname === userName || uname.includes(userName) || userName.includes(uname));
-            });
-            if (found) {
-                // se o lead tiver responsavel igual ao found.nome, permitir
-                const responsavelLead = normalizarTexto(String(lead.Responsavel ?? lead.responsavel ?? '').trim());
-                const foundName = normalizarTexto(String(found.nome ?? found.name ?? '').trim());
-                if (responsavelLead && foundName && (responsavelLead === foundName || responsavelLead.includes(foundName) || foundName.includes(responsavelLead))) {
-                    return true;
-                }
-                // ou se lead.usuarioId corresponder ao found.id
-                const foundId = String(found.id ?? found.ID ?? found.userId ?? '').trim();
-                if (foundId && String(lead.usuarioId ?? lead.raw?.usuarioId ?? '').trim() === foundId) {
-                    return true;
-                }
-            }
-        }
-
-        // fallback: deny access
         return false;
     };
     // --------------------------
@@ -473,7 +435,7 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
                 // If there is no entry or fields are undefined, set them
                 if (!novosValores[leadKey]) novosValores[leadKey] = {};
 
-                // Only set if value is meaningful or not yet present (to avoid overwriting edited local values)
+                // Only set if value is meaningful or not yet present (to avoid overwriting edited local valores)
                 if ((novosValores[leadKey].PremioLiquido === undefined || novosValores[leadKey].PremioLiquido === null) && premioInCents !== null) {
                     novosValores[leadKey].PremioLiquido = premioInCents;
                 } else if (novosValores[leadKey].PremioLiquido === undefined) {
@@ -909,7 +871,7 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
                 {/* Controles de Filtro (Inline) */}
                 <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch">
                     {/* Filtro de Nome */}
-                    <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                    <div className="flex itens-center gap-2 flex-1 min-w-[200px]">
                         <input
                             type="text"
                             placeholder="Buscar por nome..."
