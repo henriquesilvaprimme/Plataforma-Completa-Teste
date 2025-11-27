@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCcw, Search, CheckCircle, DollarSign, Calendar } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db } from './firebase';
 
 // ===============================================
@@ -162,6 +163,29 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         return '';
     };
 
+    // --- Obtém nome do usuário atual (tenta Firebase Auth e, se não encontrado, tenta sinalizadores em usuarios) ---
+    const getCurrentUserName = () => {
+        // 1) Tenta pegar pelo Firebase Auth (displayName)
+        try {
+            const auth = getAuth();
+            const user = auth && auth.currentUser;
+            if (user) {
+                if (user.displayName && String(user.displayName).trim() !== '') return String(user.displayName).trim();
+                if (user.email && String(user.email).trim() !== '') return String(user.email).trim();
+            }
+        } catch (e) {
+            // ignore
+        }
+
+        // 2) Tenta encontrar em `usuarios` um usuário marcado como current/isCurrent
+        if (Array.isArray(usuarios)) {
+            const found = usuarios.find(u => u.isCurrent || u.current || u.isMe || u.isLogged || u.me);
+            if (found) return found.nome || found.name || '';
+        }
+
+        return ''; // fallback vazio (usuário não identificado)
+    };
+
     // --- FIRESTORE: listener e fetch para leadsFechados ---
     useEffect(() => {
         setIsLoading(true);
@@ -232,7 +256,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         // Preferir leads vindos do Firebase; se vazio, usar prop `leads` como fallback
         const sourceLeads = (Array.isArray(leadsFromFirebase) && leadsFromFirebase.length > 0) ? leadsFromFirebase : (Array.isArray(leads) ? leads : []);
         // Considera como "fechado" leads que tenham Status 'Fechado' (case-insensitive) ou closedAt presente
-        const fechadosAtuais = sourceLeads.filter(lead => {
+        let fechadosAtuais = sourceLeads.filter(lead => {
             const status = String(lead.Status ?? lead.status ?? '').toLowerCase();
             if (status === 'fechado') return true;
             if (lead.closedAt) return true;
@@ -241,6 +265,21 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             }
             return false;
         });
+
+        // Se o usuário não for admin, filtrar apenas os leads transferidos para ele
+        if (!isAdmin) {
+            const currentUserName = getCurrentUserName();
+            if (currentUserName) {
+                const currentNorm = normalizarTexto(currentUserName);
+                fechadosAtuais = fechadosAtuais.filter(lead => {
+                    const resp = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? lead.Responsible ?? '';
+                    return resp && normalizarTexto(resp) === currentNorm;
+                });
+            } else {
+                // Usuário comum sem identificação — exibir nenhum lead (segurança)
+                fechadosAtuais = [];
+            }
+        }
 
         // Sincronização de estados
         setValores(prevValores => {
@@ -405,7 +444,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         }
 
         setFechadosFiltradosInterno(leadsFiltrados);
-    }, [leadsFromFirebase, leads, filtroNome, filtroData]);
+    }, [leadsFromFirebase, leads, filtroNome, filtroData, isAdmin]);
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
 
@@ -651,7 +690,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                 {/* Controles de Filtro (Inline) */}
                 <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch">
                     {/* Filtro de Nome */}
-                    <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                    <div className="flex itens-center gap-2 flex-1 min-w-[200px]">
                         <input
                             type="text"
                             placeholder="Buscar por nome..."
