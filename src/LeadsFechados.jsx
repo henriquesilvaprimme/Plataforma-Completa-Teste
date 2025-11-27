@@ -7,7 +7,7 @@ import { CheckCircle, RefreshCcw, Search, DollarSign, Calendar } from 'lucide-re
 // 1. COMPONENTE PRINCIPAL: LeadsFechados
 // ===============================================
 
-const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, scrollContainerRef }) => {
+const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, currentUser, scrollContainerRef }) => {
     // --- ESTADOS ---
     const [leadsFirebase, setLeadsFirebase] = useState([]);
     const [fechadosFiltradosInterno, setFechadosFiltradosInterno] = useState([]);
@@ -106,11 +106,16 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         scrollToTop();
     };
 
-    const fetchLeadsFechadosFromFirebase = async () => {
+    const fetchLeadsFechadosFromFirebase = async (isAdmin, currentUser) => {
         setIsLoading(true);
         try {
-            const q = query(collection(db, "leadsFechados"), where("Status", "==", "Fechado"));
-            const querySnapshot = await getDocs(q);
+            let leadsQuery = query(collection(db, "leadsFechados"), where("Status", "==", "Fechado"));
+
+            if (!isAdmin && currentUser && currentUser.nome) {
+                leadsQuery = query(leadsQuery, where("Responsavel", "==", currentUser.nome));
+            }
+
+            const querySnapshot = await getDocs(leadsQuery);
             const fetchedLeads = querySnapshot.docs.map(doc => ({
                 ID: doc.id,
                 name: doc.data().Nome,
@@ -139,9 +144,9 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
 
     // --- EFEITO DE CARREGAMENTO INICIAL ---
     useEffect(() => {
-        fetchLeadsFechadosFromFirebase();
+        fetchLeadsFechadosFromFirebase(isAdmin, currentUser);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [isAdmin, currentUser]);
 
     // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS ---
     useEffect(() => {
@@ -510,7 +515,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
             <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4 mb-4">
                     <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
-                        <CheckCircle size={32} className="mr-3 text-green-500" />
+                        <CheckCircle size={32} className="text-green-500 mr-3" />
                         Leads Fechados
                     </h1>
 
@@ -782,7 +787,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                     <div className="mb-4">
                                         <label htmlFor={`vigencia-inicio-${lead.ID}`} className="text-xs font-semibold text-gray-600 block mb-1">Início</label>
                                         <input
-                                            id={`vigencia-inicio-${lead}`}
+                                            id={`vigencia-inicio-${lead.ID}`}
                                             type="date"
                                             value={vigencia[`${lead.ID}`]?.inicio || ''}
                                             onChange={(e) => handleVigenciaInicioChange(lead.ID, e.target.value)}
