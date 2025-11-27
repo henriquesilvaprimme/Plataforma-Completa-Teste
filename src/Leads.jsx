@@ -334,27 +334,31 @@ const Leads = ({
     let emContatoCount = 0;
     let semContatoCount = 0;
     let agendadosCount = 0;
-    let todosPendentesCount = 0; // Renomeado para maior clareza
+    let todosPendentesCount = 0;
+    let fechadosCount = 0; // Novo contador para leads fechados
     const today = new Date().toLocaleDateString('pt-BR');
 
     visibleLeads.forEach((lead) => {
       const s = lead.status ?? '';
-      // Apenas leads que não estão 'Fechado' ou 'Perdido' são considerados pendentes
-      if (s !== 'Fechado' && s !== 'Perdido') {
-        todosPendentesCount++;
-      }
 
-      if (s === 'Em Contato') {
-        emContatoCount++;
-      } else if (s === 'Sem Contato') {
-        semContatoCount++;
-      } else if (isStatusAgendado(s)) {
-        const statusDateStr = extractStatusDate(s);
-        if (statusDateStr) {
-          const [dia, mes, ano] = statusDateStr.split('/');
-          const statusDateFormatted = new Date(`${ano}-${mes}-${dia}T00:00:00`).toLocaleDateString('pt-BR');
-          if (statusDateFormatted === today) {
-            agendadosCount++;
+      if (s === 'Fechado') {
+        fechadosCount++;
+      } else if (s === 'Perdido') {
+        // Não conta perdidos em nenhum filtro de "ativos"
+      } else {
+        todosPendentesCount++; // Conta todos que não são Fechado ou Perdido
+        if (s === 'Em Contato') {
+          emContatoCount++;
+        } else if (s === 'Sem Contato') {
+          semContatoCount++;
+        } else if (isStatusAgendado(s)) {
+          const statusDateStr = extractStatusDate(s);
+          if (statusDateStr) {
+            const [dia, mes, ano] = statusDateStr.split('/');
+            const statusDateFormatted = new Date(`${ano}-${mes}-${dia}T00:00:00`).toLocaleDateString('pt-BR');
+            if (statusDateFormatted === today) {
+              agendadosCount++;
+            }
           }
         }
       }
@@ -364,7 +368,8 @@ const Leads = ({
       emContato: emContatoCount,
       semContato: semContatoCount,
       agendadosHoje: agendadosCount,
-      todosPendentes: todosPendentesCount, // Usar a nova contagem
+      todosPendentes: todosPendentesCount,
+      fechados: fechadosCount, // Adiciona o contador de fechados
     };
   }, [leadsData, usuarioLogado]); // recalcula quando leadsData ou usuarioLogado mudar
 
@@ -1040,7 +1045,7 @@ const Leads = ({
             ${filtroStatus === 'Fechado' ? 'bg-green-700 text-white ring-2 ring-green-400' : 'bg-green-500 text-white hover:bg-green-600'}
           `}
         >
-          Fechados
+          Fechados <span className="text-sm font-extrabold ml-1">({contagens.fechados})</span>
         </button>
 
         <button
@@ -1050,7 +1055,7 @@ const Leads = ({
             ${filtroStatus === null ? 'bg-gray-800 text-white ring-2 ring-gray-500' : 'bg-gray-600 text-white hover:bg-gray-700'}
           `}
         >
-          Todos <span className="text-sm font-extrabold ml-1">({contagens.todosPendentes})</span>
+          Todos <span className="text-sm font-extrabold ml-1">({contagens.todosPendentes + contagens.fechados})</span>
         </button>
       </div>
 
