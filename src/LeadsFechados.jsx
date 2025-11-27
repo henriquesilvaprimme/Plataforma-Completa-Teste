@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from './firebase';
+import { db } from './firebase'; // Certifique-se de que o caminho para o seu arquivo firebase.js está correto
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
 import { CheckCircle, RefreshCcw, Search, DollarSign, Calendar } from 'lucide-react';
@@ -7,7 +7,7 @@ import { CheckCircle, RefreshCcw, Search, DollarSign, Calendar } from 'lucide-re
 // 1. COMPONENTE PRINCIPAL: LeadsFechados
 // ===============================================
 
-const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, currentUser, scrollContainerRef }) => {
+const LeadsFechados = ({ usuarios, onConfirmInsurer, onUpdateDetalhes, isAdmin, currentUser, scrollContainerRef }) => {
     // --- ESTADOS ---
     const [leadsFirebase, setLeadsFirebase] = useState([]);
     const [fechadosFiltradosInterno, setFechadosFiltradosInterno] = useState([]);
@@ -128,7 +128,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                 Seguradora: doc.data().Seguradora,
                 MeioPagamento: doc.data().MeioPagamento,
                 CartaoPortoNovo: doc.data().CartaoPortoNovo,
-                PremioLiquido: doc.data().PremioLiquido ? parseFloat(doc.data().PremioLiquido.replace('R$', '').replace('.', '').replace(',', '.')) : null,
+                PremioLiquido: doc.data().PremioLiquido ? parseFloat(String(doc.data().PremioLiquido).replace('R$', '').replace('.', '').replace(',', '.')) : null,
                 Comissao: doc.data().Comissao,
                 Parcelamento: doc.data().Parcelamento,
                 VigenciaInicial: doc.data().VigenciaInicial ? doc.data().VigenciaInicial.split('T')[0] : '',
@@ -146,11 +146,11 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     useEffect(() => {
         fetchLeadsFechadosFromFirebase(isAdmin, currentUser);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isAdmin, currentUser]);
+    }, [isAdmin, currentUser]); // Adicionado isAdmin e currentUser como dependências
 
     // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS ---
     useEffect(() => {
-        const fechadosAtuais = leadsFirebase;
+        const fechadosAtuais = leadsFirebase; // Agora usa o estado leadsFirebase
 
         // Sincronização de estados
         setValores(prevValores => {
@@ -237,8 +237,9 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
 
         // ORDENAÇÃO
         const fechadosOrdenados = [...fechadosAtuais].sort((a, b) => {
-            const dataA = new Date(getDataParaComparacao(a.Data) + 'T00:00:00');
-            const dataB = new Date(new Date(getDataParaComparacao(b.Data) + 'T00:00:00'));
+            // Usando VigenciaInicial para ordenação, pois 'Data' não está presente no objeto lead do Firebase
+            const dataA = new Date(getDataParaComparacao(a.VigenciaInicial) + 'T00:00:00');
+            const dataB = new Date(getDataParaComparacao(b.VigenciaInicial) + 'T00:00:00');
             return dataB.getTime() - dataA.getTime();
         });
 
@@ -275,7 +276,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         // setNomeEditando(null); // REMOVIDO: O campo não precisa sair do modo de edição
 
         // Verifica se o nome realmente mudou para evitar chamadas desnecessárias à API
-        const lead = leadsFirebase.find(l => l.ID === id);
+        const lead = leadsFirebase.find(l => l.ID === id); // Usa leadsFirebase
         if (lead && lead.name !== nomeAtualizado) {
             if (nomeAtualizado) {
                 // 1. Atualiza o estado local temporário (que é exibido no card)
@@ -297,7 +298,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     // <<< FIM NOVO HANDLER >>>
 
     const handlePremioLiquidoChange = (id, valor) => {
-        let cleanedValue = valor.replace(/[^\\d,\\.]/g, '');
+        let cleanedValue = valor.replace(/[^\d,\.]/g, '');
         const commaParts = cleanedValue.split(',');
         if (commaParts.length > 2) {
             cleanedValue = commaParts[0] + ',' + commaParts.slice(1).join('');
@@ -341,7 +342,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     };
 
     const handleComissaoChange = (id, valor) => {
-        let cleanedValue = valor.replace(/[^\\d,]/g, '');
+        let cleanedValue = valor.replace(/[^\d,]/g, '');
         const parts = cleanedValue.split(',');
         if (parts.length > 2) {
             cleanedValue = parts[0] + ',' + parts.slice(1).join('');
@@ -646,6 +647,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                         <p><strong>Tipo de Seguro:</strong> {lead.insuranceType}</p>
                                     </div>
 
+                                    {/* A exibição do responsável agora é sempre para todos os usuários, pois a filtragem já ocorreu */}
                                     {responsavel && (
                                         <p className="mt-4 text-sm font-semibold text-green-600 bg-green-50 p-2 rounded-lg">
                                             Transferido para: <strong>{responsavel.nome}</strong>
