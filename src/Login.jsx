@@ -1,23 +1,54 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { db } from "../firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
 
 export default function Login() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
+  const [usuario, setUsuario] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    setErro("");
+    if (!usuario || !senha) {
+      setErro("Preencha usuário e senha.");
+      return;
+    }
 
-    // Autenticação simples (substituir por lógica real se necessário)
-    const statusUsuario = email === "admin@teste.com" && senha === "123456" ? "Admin" : null;
+    setLoading(true);
 
-    if (statusUsuario === "Ativo" || statusUsuario === "Admin") {
-      localStorage.setItem("auth", "true");
-      navigate("/dashboard");
-    } else {
-      setErro("E-mail ou senha inválidos.");
+    try {
+      const usuariosRef = collection(db, "usuarios");
+      const q = query(
+        usuariosRef,
+        where("usuario", "==", usuario),
+        where("senha", "==", senha),
+        where("status", "==", "Ativo")
+      );
+
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        // Pegamos o primeiro documento que bateu com a consulta
+        const docSnap = querySnapshot.docs[0];
+        const userData = { id: docSnap.id, ...docSnap.data() };
+
+        // Marca autenticação localmente (ajuste conforme seu fluxo)
+        localStorage.setItem("auth", "true");
+        localStorage.setItem("user", JSON.stringify(userData));
+
+        navigate("/dashboard");
+      } else {
+        setErro("Usuário, senha ou status inválidos.");
+      }
+    } catch (err) {
+      console.error("Erro ao consultar usuários no Firebase:", err);
+      setErro("Erro ao processar login. Tente novamente mais tarde.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -27,10 +58,10 @@ export default function Login() {
         <h2 className="text-2xl font-bold mb-6 text-center">Login</h2>
         {erro && <p className="text-red-500 text-sm mb-4">{erro}</p>}
         <input
-          type="email"
-          placeholder="E-mail"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          type="text"
+          placeholder="Usuário"
+          value={usuario}
+          onChange={(e) => setUsuario(e.target.value)}
           className="w-full px-4 py-2 border rounded mb-4"
           required
         />
@@ -42,8 +73,12 @@ export default function Login() {
           className="w-full px-4 py-2 border rounded mb-4"
           required
         />
-        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
-          Entrar
+        <button
+          type="submit"
+          className={`w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-60`}
+          disabled={loading}
+        >
+          {loading ? "Entrando..." : "Entrar"}
         </button>
       </form>
     </div>
