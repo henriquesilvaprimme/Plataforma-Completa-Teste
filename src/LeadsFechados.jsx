@@ -9,6 +9,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, scrollContainerRef }) => {
     // --- ESTADOS ---
     const [leadsFirebase, setLeadsFirebase] = useState([]);
+    const [fechadosFiltradosInterno, setFechadosFiltradosInterno] = useState([]);
     const [paginaAtual, setPaginaAtual] = useState(1);
     const leadsPorPagina = 10;
 
