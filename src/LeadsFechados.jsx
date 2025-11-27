@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from './firebase';
+import { db } from './firebaseConfig';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
 // ===============================================
@@ -8,7 +8,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 
 const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, scrollContainerRef }) => {
     // --- ESTADOS ---
-    const [leads, setLeads] = useState([]);
+    const [leadsFirebase, setLeadsFirebase] = useState([]);
     const [paginaAtual, setPaginaAtual] = useState(1);
     const leadsPorPagina = 10;
 
@@ -112,7 +112,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                 ID: doc.id,
                 ...doc.data()
             }));
-            setLeads(fetchedLeads);
+            setLeadsFirebase(fetchedLeads);
         } catch (error) {
             console.error("Erro ao buscar leads fechados do Firebase:", error);
         } finally {
@@ -128,7 +128,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
 
     // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS ---
     useEffect(() => {
-        const fechadosAtuais = leads;
+        const fechadosAtuais = leadsFirebase;
 
         // Sincronização de estados
         setValores(prevValores => {
@@ -237,7 +237,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         }
 
         setFechadosFiltradosInterno(leadsFiltrados);
-    }, [leads, filtroNome, filtroData]);
+    }, [leadsFirebase, filtroNome, filtroData]);
 
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
@@ -251,9 +251,9 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     const handleNomeBlur = (id, novoNome) => {
         const nomeAtualizado = novoNome.trim();
         // setNomeEditando(null); // REMOVIDO: O campo não precisa sair do modo de edição
-        
+
         // Verifica se o nome realmente mudou para evitar chamadas desnecessárias à API
-        const lead = leads.find(l => l.ID === id);
+        const lead = leadsFirebase.find(l => l.ID === id);
         if (lead && lead.name !== nomeAtualizado) {
             if (nomeAtualizado) {
                 // 1. Atualiza o estado local temporário (que é exibido no card)
@@ -355,7 +355,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         }));
         onUpdateDetalhes(id, 'Parcelamento', valor);
     };
-    
+
     // ************************************************************
     // NOVO HANDLER: Meio de Pagamento
     // ************************************************************
@@ -368,14 +368,14 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                     MeioPagamento: valor,
                 },
             };
-            
+
             // Lógica de limpeza: Se o novo Meio de Pagamento não for 'CP',
             // limpe o campo 'CartaoPortoNovo' se ele estiver preenchido.
             if (valor !== 'CP' && newState[`${id}`]?.CartaoPortoNovo) {
                 newState[`${id}`].CartaoPortoNovo = '';
                 onUpdateDetalhes(id, 'CartaoPortoNovo', ''); // Limpa na API também
             }
-            
+
             return newState;
         });
 
@@ -401,7 +401,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     // ************************************************************
     const handleInsurerChange = (id, valor) => {
         const portoSeguradoras = ['Porto Seguro', 'Azul Seguros', 'Itau Seguros'];
-        
+
         setValores(prev => {
             const newState = {
                 ...prev,
@@ -410,7 +410,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                     insurer: valor,
                 },
             };
-            
+
             // Lógica de limpeza: Se a nova seguradora não for Porto/Azul/Itaú,
             // limpe o campo 'CartaoPortoNovo' se ele estiver preenchido.
             if (!portoSeguradoras.includes(valor) && newState[`${id}`]?.CartaoPortoNovo) {
@@ -581,7 +581,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                             >
                                 {/* COLUNA 1: Informações do Lead */}
                                 <div className="col-span-1 border-b pb-4 lg:border-r lg:pb-0 lg:pr-6">
-                                    
+
                                     {/* >>> NOVO: Lógica de Edição de Nome do Lead (SEMPRE ABERTO OU BLOQUEADO) <<< */}
                                     <div className="flex items-center gap-2 mb-2">
                                         {isSeguradoraPreenchida ? (
@@ -677,7 +677,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                             <option value="Boleto">Boleto</option>
                                         </select>
                                     </div>
-                                    
+
                                     {/* 3. Cartão Porto Seguro Novo? (Select) - CONDICIONAL E RELOCADO */}
                                     {showCartaoPortoNovo && (
                                         <div className="mb-4">
@@ -694,7 +694,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                             </select>
                                         </div>
                                     )}
-                                    
+
                                     {/* 4., 5., 6. Demais campos (Prêmio, Comissão, Parcelamento) */}
                                     <div className="grid grid-cols-2 gap-3 mt-4"> {/* Adicionado mt-4 para espaçamento após os novos campos */}
                                         {/* Prêmio Líquido (Input) */}
@@ -746,7 +746,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                                 ))}
                                             </select>
                                         </div>
-                                        
+
                                     </div>
                                 </div>
 
@@ -795,7 +795,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                                     valores[`${lead.ID}`]?.Parcelamento,
                                                     vigencia[`${lead.ID}`]?.inicio,
                                                     vigencia[`${lead.ID}`]?.final,
-                                                    // Meio de Pagamento e Cartão Porto Novo na Confirmação 
+                                                    // Meio de Pagamento e Cartão Porto Novo na Confirmação
                                                     valores[`${lead.ID}`]?.MeioPagamento || '',
                                                     valores[`${lead.ID}`]?.CartaoPortoNovo || ''
                                                 );
