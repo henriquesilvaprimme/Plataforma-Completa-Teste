@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from './firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
+import { CheckCircle, RefreshCcw, Search, DollarSign, Calendar } from 'lucide-react';
 // ===============================================
 // 1. COMPONENTE PRINCIPAL: LeadsFechados
 // ===============================================
