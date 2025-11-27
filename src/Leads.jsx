@@ -864,6 +864,21 @@ const Leads = ({
       const closedRef = doc(db, 'leadsFechados', leadId);
       await setDoc(closedRef, payload);
 
+      // --- NOVO: grava também em 'renovacoes' (mesmo payload, mesmo doc id) ---
+      try {
+        const renovRef = doc(db, 'renovacoes', leadId);
+        const renovPayload = {
+          ...payload,
+          // garante que existam timestamps próprios para renovacoes (se quiser rastrear)
+          registeredAt: serverTimestamp(),
+        };
+        await setDoc(renovRef, renovPayload);
+      } catch (errRenov) {
+        console.error('Erro ao gravar em renovacoes:', errRenov);
+        // não interrompe o fluxo principal; só registra o erro
+      }
+      // --- FIM gravação em renovacoes ---
+
       // Atualiza lead original: status, closedAt e campos de venda/nome
       const originalRef = doc(db, 'leads', leadId);
       const updatePayload = {
