@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
+import { RefreshCcw, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat, PieChart } from 'lucide-react'; // Adicionado Repeat e PieChart
 
 const Dashboard = ({ usuarioLogado }) => {
-  const [leadsData, setLeadsData] = useState([]); // Agora armazena todos os leads do Firebase
-  const [isLoading, setIsLoading] = useState(true); // Estado para o carregamento inicial do dashboard
-  const [isRefreshing, setIsRefreshing] = useState(false); // Estado para o botão de refresh
+  const [leadsData, setLeadsData] = useState([]);
+  const [renovacoesData, setRenovacoesData] = useState([]); // Novo estado para renovações
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Inicializar dataInicio e dataFim com valores padrão ao carregar o componente
   const getPrimeiroDiaMes = () => {
     const hoje = new Date();
     return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
@@ -22,7 +22,6 @@ const Dashboard = ({ usuarioLogado }) => {
   const [dataFim, setDataFim] = useState(getDataHoje());
   const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  // Função auxiliar para normalizar leads (copiada de Leads.jsx)
   const normalizeLead = (docId, data = {}) => {
     const safe = (v) => (v === undefined || v === null ? '' : v);
 
@@ -55,7 +54,7 @@ const Dashboard = ({ usuarioLogado }) => {
     };
   };
 
-  // Listener para leads do Firebase
+  // Listener para leads e renovações do Firebase
   useEffect(() => {
     const leadsColRef = collection(db, 'leads');
     const unsubscribeLeads = onSnapshot(
@@ -65,8 +64,8 @@ const Dashboard = ({ usuarioLogado }) => {
           normalizeLead(doc.id, doc.data())
         );
         setLeadsData(leadsList);
-        setIsLoading(false); // Desativa o loading inicial após carregar os dados
-        setIsRefreshing(false); // Desativa o refresh se estava ativo
+        setIsLoading(false);
+        setIsRefreshing(false);
       },
       (error) => {
         console.error('Erro ao buscar leads:', error);
@@ -75,8 +74,23 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     );
 
+    const renovacoesColRef = collection(db, 'renovacoes'); // Nova coleção para renovações
+    const unsubscribeRenovacoes = onSnapshot(
+      renovacoesColRef,
+      (snapshot) => {
+        const renovacoesList = snapshot.docs.map((doc) =>
+          normalizeLead(doc.id, doc.data()) // Reutiliza normalizeLead para renovações
+        );
+        setRenovacoesData(renovacoesList);
+      },
+      (error) => {
+        console.error('Erro ao buscar renovações:', error);
+      }
+    );
+
     return () => {
       unsubscribeLeads();
+      unsubscribeRenovacoes();
     };
   }, []);
 
@@ -133,7 +147,6 @@ const Dashboard = ({ usuarioLogado }) => {
     return parts.length > 1 ? parts[1] : null;
   };
 
-  // Função auxiliar para validar e formatar a data (mantida da iteração anterior)
   const getValidDateStr = (dateValue) => {
     if (!dateValue) return null;
     try {
@@ -150,7 +163,6 @@ const Dashboard = ({ usuarioLogado }) => {
   const filteredLeads = useMemo(() => {
     let filtered = leadsData.filter((lead) => canViewLead(lead));
 
-    // Aplica o filtro de data de criação
     filtered = filtered.filter((lead) => {
       const dataLeadStr = getValidDateStr(lead.createdAt);
       if (!dataLeadStr) return false;
@@ -162,6 +174,20 @@ const Dashboard = ({ usuarioLogado }) => {
     return filtered;
   }, [leadsData, usuarioLogado, filtroAplicado]);
 
+  const filteredRenovacoes = useMemo(() => {
+    let filtered = renovacoesData.filter((renovacao) => canViewLead(renovacao)); // Aplica filtro de visibilidade
+
+    filtered = filtered.filter((renovacao) => {
+      const dataRenovacaoStr = getValidDateStr(renovacao.createdAt); // Assume que renovações também têm createdAt
+      if (!dataRenovacaoStr) return false;
+      if (filtroAplicado.inicio && dataRenovacaoStr < filtroAplicado.inicio) return false;
+      if (filtroAplicado.fim && dataRenovacaoStr > filtroAplicado.fim) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [renovacoesData, usuarioLogado, filtroAplicado]);
+
   const dashboardStats = useMemo(() => {
     let totalLeads = 0;
     let vendas = 0;
@@ -169,9 +195,7 @@ const Dashboard = ({ usuarioLogado }) => {
     let semContato = 0;
     let agendadosHoje = 0;
     let perdidos = 0;
-    const today = new Date().toLocaleDateString('pt-BR');
 
-    // Contadores por seguradora para leads fechados
     let portoSeguro = 0;
     let azulSeguros = 0;
     let itauSeguros = 0;
@@ -180,18 +204,25 @@ const Dashboard = ({ usuarioLogado }) => {
     let somaTotalPercentualComissao = 0;
     let totalVendasParaMedia = 0;
 
+    let totalRenovacoes = 0;
+    let renovados = 0;
+    let renovacoesPerdidas = 0;
+    let premioLiquidoRenovados = 0;
+    let somaComissaoRenovados = 0;
+    let totalRenovadosParaMedia = 0;
+
+    const today = new Date().toLocaleDateString('pt-BR');
     const demaisSeguradorasLista = [
       'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
     ];
 
     filteredLeads.forEach((lead) => {
-      totalLeads++; // Todos os leads visíveis e filtrados por data
+      totalLeads++;
 
       const s = lead.status ?? '';
 
       if (s === 'Fechado') {
         vendas++;
-        // Contagem por seguradora para leads fechados
         const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
         if (segNormalized === 'porto seguro') {
           portoSeguro++;
@@ -203,12 +234,9 @@ const Dashboard = ({ usuarioLogado }) => {
           demaisSeguradoras++;
         }
 
-        // Soma de prêmio líquido e comissão para leads fechados
-        // Garante que PremioLiquido seja um número antes de somar
         const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
         totalPremioLiquido += premio;
 
-        // Garante que Comissão seja um número antes de somar
         const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
         somaTotalPercentualComissao += comissao;
         totalVendasParaMedia++;
@@ -233,8 +261,26 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     });
 
+    filteredRenovacoes.forEach((renovacao) => {
+      totalRenovacoes++;
+      const s = renovacao.status ?? '';
+
+      if (s === 'Renovado') {
+        renovados++;
+        const premio = parseFloat(String(renovacao.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        premioLiquidoRenovados += premio;
+        const comissao = parseFloat(String(renovacao.Comissao).replace(/%/g, '')) || 0;
+        somaComissaoRenovados += comissao;
+        totalRenovadosParaMedia++;
+      } else if (s === 'Perdido') { // Assumindo que renovações também podem ser 'Perdido'
+        renovacoesPerdidas++;
+      }
+    });
+
     const taxaConversao = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
     const comissaoMediaGlobal = totalVendasParaMedia > 0 ? somaTotalPercentualComissao / totalVendasParaMedia : 0;
+    const mediaComissaoRenovados = totalRenovadosParaMedia > 0 ? somaComissaoRenovados / totalRenovadosParaMedia : 0;
+    const taxaRenovacao = totalRenovacoes > 0 ? (renovados / totalRenovacoes) * 100 : 0;
 
     return {
       totalLeads,
@@ -250,14 +296,18 @@ const Dashboard = ({ usuarioLogado }) => {
       demaisSeguradoras,
       totalPremioLiquido,
       comissaoMediaGlobal: comissaoMediaGlobal.toFixed(2),
+      totalRenovacoes,
+      renovados,
+      renovacoesPerdidas,
+      premioLiquidoRenovados,
+      mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
+      taxaRenovacao: taxaRenovacao.toFixed(2),
     };
-  }, [filteredLeads]);
+  }, [filteredLeads, filteredRenovacoes]);
 
   const handleAplicarFiltroData = () => {
-    setIsRefreshing(true); // Ativa o loading do botão
+    setIsRefreshing(true);
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
-    // O useEffect do listener de leads já vai atualizar os dados,
-    // então o isRefreshing será desativado quando os novos dados chegarem.
   };
 
   const boxStyle = {
@@ -268,11 +318,45 @@ const Dashboard = ({ usuarioLogado }) => {
     textAlign: 'center',
   };
 
+  // Componente simples de gráfico de pizza para a taxa de renovação
+  const PieChartComponent = ({ percentage }) => {
+    const radius = 40;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+    return (
+      <svg width="100" height="100" viewBox="0 0 100 100">
+        <circle
+          cx="50"
+          cy="50"
+          r={radius}
+          fill="transparent"
+          stroke="#e0e0e0"
+          strokeWidth="10"
+        />
+        <circle
+          cx="50"
+          cy="50"
+          r={radius}
+          fill="transparent"
+          stroke="#4CAF50"
+          strokeWidth="10"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          transform="rotate(-90 50 50)"
+        />
+        <text x="50" y="55" textAnchor="middle" fontSize="20" fill="#333" fontWeight="bold">
+          {percentage}%
+        </text>
+      </svg>
+    );
+  };
+
   return (
     <div style={{ padding: '20px' }}>
       <h1>Dashboard</h1>
 
-      {/* Filtro de datas com botão e o NOVO Botão de Refresh */}
       <div
         style={{
           display: 'flex',
@@ -320,21 +404,20 @@ const Dashboard = ({ usuarioLogado }) => {
           Filtrar
         </button>
 
-        {/* Botão de Refresh - agora apenas um indicador visual de que os dados estão sendo atualizados */}
         <button
           title='Atualizando dados...'
-          disabled={isRefreshing || isLoading} // Desabilita se estiver carregando ou atualizando
+          disabled={isRefreshing || isLoading}
           style={{
-            backgroundColor: '#6c757d', // Cor cinza para o botão de refresh
+            backgroundColor: '#6c757d',
             color: 'white',
             border: 'none',
             borderRadius: '6px',
-            padding: '6px 10px', // Um pouco menor para o ícone
-            cursor: 'default', // Cursor padrão, pois está desabilitado
+            padding: '6px 10px',
+            cursor: 'default',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            minWidth: '36px', // Tamanho mínimo para o ícone
+            minWidth: '36px',
             height: '36px',
           }}
         >
@@ -344,22 +427,20 @@ const Dashboard = ({ usuarioLogado }) => {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
           ) : (
-            <RefreshCcw size={20} /> // Ícone de refresh (não clicável, apenas visual)
+            <RefreshCcw size={20} />
           )}
         </button>
       </div>
 
-      {/* Spinner de carregamento para o Dashboard geral */}
       {isLoading && (
         <div style={{ textAlign: 'center', padding: '20px' }}>
           <p>Carregando dados do dashboard...</p>
-          {/* Você pode adicionar um spinner aqui se quiser um indicador visual */}
         </div>
       )}
 
-      {!isLoading && ( // Renderiza o conteúdo apenas quando não estiver carregando
+      {!isLoading && (
         <>
-          {/* Primeira linha de contadores */}
+          {/* Primeira linha de contadores - Leads */}
           <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
             <div style={{ ...boxStyle, backgroundColor: '#eee', color: '#333' }}>
               <h3>Total de Leads</h3>
@@ -387,7 +468,7 @@ const Dashboard = ({ usuarioLogado }) => {
             </div>
           </div>
 
-          {/* Segunda linha de contadores */}
+          {/* Segunda linha de contadores - Seguradoras */}
           <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
             <div style={{ ...boxStyle, backgroundColor: '#003366' }}>
               <h3>Porto Seguro</h3>
@@ -407,27 +488,61 @@ const Dashboard = ({ usuarioLogado }) => {
             </div>
           </div>
 
-          {/* Somente para Admin: linha de Prêmio Líquido e Comissão */}
-          {isAdmin && (
-            <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-              <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
-                <h3>Total Prêmio Líquido</h3>
-                <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {dashboardStats.totalPremioLiquido.toLocaleString('pt-BR', {
-                    style: 'currency',
-                    currency: 'BRL',
-                  })}
-                </p>
-              </div>
-                
-              <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
-                <h3>Média Comissão</h3>
-                <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {dashboardStats.comissaoMediaGlobal.replace('.', ',')}%
-                </p>
-              </div>
+          {/* Linha de Prêmio Líquido e Comissão (visível para todos) */}
+          <div style={{ display: 'flex', gap: '20px', marginTop: '20px', marginBottom: '20px' }}>
+            <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
+              <h3>Total Prêmio Líquido</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
+                {dashboardStats.totalPremioLiquido.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
             </div>
-          )}
+              
+            <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
+              <h3>Média Comissão</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
+                {dashboardStats.comissaoMediaGlobal.replace('.', ',')}%
+              </p>
+            </div>
+          </div>
+
+          {/* Nova seção de Renovações */}
+          <h2 style={{ marginTop: '40px', marginBottom: '20px', fontSize: '28px', fontWeight: 'bold', color: '#333' }}>Renovações</h2>
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
+            <div style={{ ...boxStyle, backgroundColor: '#673AB7' }}> {/* Cor para Renovações */}
+              <h3>Total de Renovações</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.totalRenovacoes}</p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#2196F3' }}> {/* Cor para Renovados */}
+              <h3>Renovados</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.renovados}</p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#FF5722' }}> {/* Cor para Renovações Perdidas */}
+              <h3>Renovações Perdidas</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.renovacoesPerdidas}</p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#00BCD4' }}> {/* Cor para Prêmio Líquido Renovados */}
+              <h3>Prêmio Líquido Renovados</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
+                {dashboardStats.premioLiquidoRenovados.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#8BC34A' }}> {/* Cor para Média Comissão Renovados */}
+              <h3>Média Comissão Renovados</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
+                {dashboardStats.mediaComissaoRenovados.replace('.', ',')}%
+              </p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#FFC107', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+              <h3>Taxa de Renovação</h3>
+              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} />
+            </div>
+          </div>
         </>
       )}
     </div>
