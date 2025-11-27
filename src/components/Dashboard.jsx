@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db } from './firebase';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
 
 const Dashboard = ({ usuarioLogado }) => {
@@ -204,8 +204,13 @@ const Dashboard = ({ usuarioLogado }) => {
         }
 
         // Soma de prêmio líquido e comissão para leads fechados
-        totalPremioLiquido += (Number(lead.PremioLiquido) || 0);
-        somaTotalPercentualComissao += (Number(lead.Comissao) || 0);
+        // Garante que PremioLiquido seja um número antes de somar
+        const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        totalPremioLiquido += premio;
+
+        // Garante que Comissão seja um número antes de somar
+        const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
+        somaTotalPercentualComissao += comissao;
         totalVendasParaMedia++;
 
       } else if (s === 'Em Contato') {
