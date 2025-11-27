@@ -121,91 +121,39 @@ const Leads = ({
   // Função para mover lead para leadsFechados e marcar o original como closed
   const moveLeadToClosed = async (leadId, leadData = {}) => {
     try {
-      // Construir payload contendo apenas os campos preenchidos solicitados
-      // e deixando vazios os campos que serão preenchidos no LeadsFechados.jsx
-      const nomeVal =
-        leadData.name ??
-        leadData.nome ??
-        leadData.Nome ??
-        leadData.Name ??
-        '';
-
-      const vehicleModelVal =
-        leadData.vehicleModel ??
-        leadData.modelo ??
-        leadData.Modelo ??
-        '';
-
-      const vehicleYearVal =
-        leadData.vehicleYearModel ??
-        leadData.anoModelo ??
-        leadData.AnoModelo ??
-        leadData.ano ??
-        '';
-
-      const cityVal =
-        leadData.city ??
-        leadData.Cidade ??
-        leadData.cidade ??
-        '';
-
-      const phoneVal =
-        leadData.phone ??
-        leadData.Telefone ??
-        leadData.telefone ??
-        leadData.phoneNumber ??
-        '';
-
-      const insuranceTypeVal =
-        leadData.insuranceType ??
-        leadData.tipoSeguro ??
-        leadData.TipoSeguro ??
-        '';
-
+      // Prepare payload com múltiplos formatos (para compatibilidade com o componente de fechados)
       const payload = {
         // IDs / nomes
         ID: leadData.ID ?? leadData.id ?? String(leadId),
         id: String(leadId),
-        // Nome
-        Nome: nomeVal,
-        name: nomeVal,
-        Name: nomeVal,
-        // Modelo / Ano
-        Modelo: vehicleModelVal,
-        vehicleModel: vehicleModelVal,
-        AnoModelo: vehicleYearVal,
-        vehicleYearModel: vehicleYearVal,
-        // Cidade / Telefone / TipoSeguro
-        Cidade: cityVal,
-        city: cityVal,
-        Telefone: phoneVal,
-        phone: phoneVal,
-        TipoSeguro: insuranceTypeVal,
-        insuranceType: insuranceTypeVal,
-        // Campos de venda — deixamos vazios intencionalmente
-        Seguradora: '',
-        insurer: '',
-        MeioPagamento: '',
-        CartaoPortoNovo: '',
-        PremioLiquido: '',
-        Comissao: '',
-        Parcelamento: '',
-        VigenciaInicial: '',
-        VigenciaFinal: '',
-        // Status/Observação/Responsável mínimos
+        name: leadData.name ?? leadData.nome ?? leadData.Nome ?? leadData.Name ?? '',
+        Name: leadData.Name ?? leadData.name ?? leadData.nome ?? '',
+        // Valores financeiros (preservando nomes esperados pela UI antiga)
+        PremioLiquido: leadData.PremioLiquido ?? leadData.premioLiquido ?? leadData.premioLiquidoFormatted ?? '',
+        Comissao: leadData.Comissao ?? leadData.comissao ?? leadData.Comissao ?? '',
+        Parcelamento: leadData.Parcelamento ?? leadData.parcelamento ?? leadData.parcelamento ?? '',
+        // Seguradora / pagamento / cartão Porto
+        Seguradora: leadData.Seguradora ?? leadData.insurer ?? leadData.insurer ?? '',
+        MeioPagamento: leadData.MeioPagamento ?? leadData.MeioPagamento ?? '',
+        CartaoPortoNovo: leadData.CartaoPortoNovo ?? '',
+        // Datas
+        Data: leadData.Data ?? formatDDMMYYYYFromISO(leadData.createdAt) ?? '',
+        VigenciaInicial: leadData.VigenciaInicial ?? leadData.vigenciaInicial ?? '',
+        VigenciaFinal: leadData.VigenciaFinal ?? leadData.vigenciaFinal ?? '',
+        // Outros
         Status: leadData.status ?? leadData.Status ?? 'Fechado',
         Observacao: leadData.observacao ?? leadData.Observacao ?? '',
         Responsavel: leadData.responsavel ?? leadData.Responsavel ?? '',
-        usuarioId: leadData.usuarioId ?? null,
-        // Data/metadata
-        Data: leadData.Data ?? formatDDMMYYYYFromISO(leadData.createdAt) ?? '',
+        usuarioId: leadData.usuarioId ?? leadData.usuarioId ?? null,
         createdAt: leadData.createdAt ?? null,
         closedAt: serverTimestamp(),
+        // Mantenha o objeto raw para referência
+        raw: { ...(leadData || {}) },
       };
 
-      // Escreve o documento em leadsFechados (substitui conteúdo do doc para garantir os campos)
+      // Salva no leadsFechados com o mesmo ID (facilita rastreabilidade)
       const closedRef = doc(db, 'leadsFechados', String(leadId));
-      await setDoc(closedRef, payload); // sem merge para garantir que vendas fiquem vazias
+      await setDoc(closedRef, payload, { merge: true });
 
       // Marca o lead original como fechado em vez de deletar
       const originalRef = doc(db, 'leads', String(leadId));
@@ -213,10 +161,11 @@ const Leads = ({
         closed: true,
         closedAt: serverTimestamp(),
         status: payload.Status ?? 'Fechado',
+        // opcional: preserve observação/agendamento já atualizados
       };
       await updateDoc(originalRef, updatePayload);
 
-      console.log(`Lead ${leadId} copiado para leadsFechados (campos base) e marcado como closed no leads.`);
+      console.log(`Lead ${leadId} copiado para leadsFechados e marcado como closed no leads.`);
     } catch (err) {
       console.error('Erro ao mover/marcar lead como fechado:', err);
       // Não lançar para não interromper o fluxo do usuário
@@ -240,6 +189,7 @@ const Leads = ({
             return dbb - da;
           });
 
+          // console.log('onSnapshot leads:', lista); // descomente para debugar
           setLeadsData(lista);
 
           // Atualiza observações e flags imediatamente para refletir mudanças do formulário
@@ -959,7 +909,7 @@ const Leads = ({
               <button
                 onClick={handlePaginaProxima}
                 disabled={paginaCorrigida >= totalPaginas || isLoading}
-                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duração-150 shadow-md ${
+                className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
                   (paginaCorrigida >= totalPaginas || isLoading)
                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                     : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
