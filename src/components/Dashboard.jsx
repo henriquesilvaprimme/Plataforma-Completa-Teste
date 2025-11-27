@@ -1,25 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-  collection,
-  query,
-  onSnapshot,
-  where,
-  getDocs,
-} from 'firebase/firestore';
-import { db } from '../firebase';
-import {
-  Users,
-  DollarSign,
-  PhoneCall,
-  PhoneOff,
-  Calendar,
-  XCircle,
-  TrendingUp,
-} from 'lucide-react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from './firebase';
+import { Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp } from 'lucide-react';
 
 const Dashboard = ({ usuarioLogado }) => {
   const [leadsData, setLeadsData] = useState([]);
-  const [usuariosData, setUsuariosData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filtroMesAno, setFiltroMesAno] = useState('');
 
@@ -72,25 +57,8 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     );
 
-    // Listener para usuários
-    const usuariosColRef = collection(db, 'usuarios');
-    const unsubscribeUsuarios = onSnapshot(
-      usuariosColRef,
-      (snapshot) => {
-        const usuariosList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setUsuariosData(usuariosList);
-      },
-      (error) => {
-        console.error('Erro ao buscar usuários:', error);
-      }
-    );
-
     return () => {
       unsubscribeLeads();
-      unsubscribeUsuarios();
     };
   }, []);
 
