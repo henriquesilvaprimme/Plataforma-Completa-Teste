@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Lead from './components/Lead';
 import { RefreshCcw, Bell, Search } from 'lucide-react';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
 
 const Leads = ({
@@ -27,31 +27,105 @@ const Leads = ({
   const [showNotification, setShowNotification] = useState(false);
   const [hasScheduledToday, setHasScheduledToday] = useState(false);
 
-  // Fetch inicial e função reutilizável para buscar leads do Firestore
+  // Normaliza um documento do Firestore para o formato esperado pelo React
+  const normalizeLead = (docId, data = {}) => {
+    const safe = (v) => (v === undefined || v === null ? '' : v);
+    // Tratamento de createdAt (Timestamp -> ISO string)
+    const toISO = (v) => {
+      if (!v && v !== 0) return '';
+      if (typeof v === 'object' && typeof v.toDate === 'function') {
+        return v.toDate().toISOString();
+      }
+      if (typeof v === 'string') return v;
+      try {
+        return new Date(v).toISOString();
+      } catch {
+        return '';
+      }
+    };
+
+    const name = safe(data.name ?? data.Name ?? data.nome ?? data.Nome);
+    const vehicleModel = safe(data.vehicleModel ?? data.vehiclemodel ?? data.modelo ?? data.Modelo);
+    const vehicleYearModel = safe(data.vehicleYearModel ?? data.vehicleyearmodel ?? data.anoModelo ?? data.ano);
+    const city = safe(data.city ?? data.Cidade ?? data.cidade);
+    const phone = safe(data.phone ?? data.Telefone ?? data.telefone ?? data.phoneNumber);
+    const insuranceType = safe(data.insuranceType ?? data.insurancetype ?? data.tipoSeguro ?? data.tipo_de_seguro);
+
+    return {
+      id: String(docId),
+      ID: data.ID ?? data.id ?? docId,
+      name,
+      nome: name,
+      vehicleModel,
+      vehicleYearModel,
+      city,
+      phone,
+      insuranceType,
+      status: typeof data.status === 'string' ? data.status : (data.Status ?? '') ,
+      confirmado: data.confirmado === true || data.confirmado === 'true' || false,
+      insurer: data.insurer ?? '',
+      insurerConfirmed: data.insurerConfirmed === true || data.insurerConfirmed === 'true' || false,
+      usuarioId: data.usuarioId ? Number(data.usuarioId) : (data.usuarioId ?? null),
+      premioLiquido: data.premioLiquido ?? data.PremioLiquido ?? '',
+      comissao: data.comissao ?? data.Comissao ?? '',
+      parcelamento: data.parcelamento ?? data.Parcelamento ?? '',
+      VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? '',
+      VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? '',
+      createdAt: toISO(data.createdAt ?? data.data ?? data.Data),
+      responsavel: data.responsavel ?? data.Responsavel ?? '',
+      editado: data.editado ?? '',
+      observacao: data.observacao ?? data.Observacao ?? '',
+      agendamento: data.agendamento ?? data.Agendamento ?? '',
+      agendados: data.agendados ?? false,
+      MeioPagamento: data.MeioPagamento ?? '',
+      CartaoPortoNovo: data.CartaoPortoNovo ?? '',
+      // mantém outros campos brutos (se necessário)
+      ...data,
+    };
+  };
+
+  // Listener em tempo real para leads (onSnapshot)
+  useEffect(() => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+      const unsub = onSnapshot(
+        q,
+        (snapshot) => {
+          const lista = snapshot.docs.map((d) => normalizeLead(d.id, d.data()));
+          setLeadsData(lista);
+          setIsLoading(false);
+        },
+        (err) => {
+          console.error('Erro no listener de leads:', err);
+          setIsLoading(false);
+        }
+      );
+
+      return () => {
+        unsub();
+      };
+    } catch (err) {
+      console.error('Erro ao iniciar listener de leads:', err);
+      setIsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Função de refresh manual caso queira forçar fetch único
   const fetchLeadsFromFirebase = async () => {
     setIsLoading(true);
     try {
       const querySnapshot = await getDocs(collection(db, 'leads'));
       const lista = [];
       querySnapshot.forEach((docSnap) => {
-        lista.push({
-          id: docSnap.id,
-          ...docSnap.data(),
-        });
+        lista.push(normalizeLead(docSnap.id, docSnap.data()));
       });
 
-      // Opcional: ordenar por createdAt (se existir)
+      // Ordena por createdAt (ISO) - já veio do servidor, mas garantimos
       lista.sort((a, b) => {
-        const toDate = (v) => {
-          if (!v) return new Date(0);
-          // Firestore Timestamp tem toDate()
-          if (typeof v === 'object' && typeof v.toDate === 'function') {
-            return v.toDate();
-          }
-          return new Date(v);
-        };
-        const da = toDate(a.createdAt);
-        const dbb = toDate(b.createdAt);
+        const da = a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const dbb = b.createdAt ? new Date(b.createdAt) : new Date(0);
         return dbb - da;
       });
 
@@ -63,11 +137,6 @@ const Leads = ({
       setIsLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchLeadsFromFirebase();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Atualiza observações e flags de edição quando leads chegam
   useEffect(() => {
@@ -113,17 +182,18 @@ const Leads = ({
     const today = new Date().toLocaleDateString('pt-BR');
 
     leadsData.forEach((lead) => {
+      const s = lead.status ?? '';
       // Ignorar Fechado e Perdido do total Geral (pendentes)
-      if (lead.status !== 'Fechado' && lead.status !== 'Perdido') {
+      if (s !== 'Fechado' && s !== 'Perdido') {
         todosCount++;
       }
 
-      if (lead.status === 'Em Contato') {
+      if (s === 'Em Contato') {
         emContatoCount++;
-      } else if (lead.status === 'Sem Contato') {
+      } else if (s === 'Sem Contato') {
         semContatoCount++;
-      } else if (isStatusAgendado(lead.status)) {
-        const statusDateStr = extractStatusDate(lead.status);
+      } else if (isStatusAgendado(s)) {
+        const statusDateStr = extractStatusDate(s);
         if (statusDateStr) {
           const [dia, mes, ano] = statusDateStr.split('/');
           const statusDateFormatted = new Date(`${ano}-${mes}-${dia}T00:00:00`).toLocaleDateString('pt-BR');
@@ -147,7 +217,7 @@ const Leads = ({
     setHasScheduledToday(contagens.agendadosHoje > 0);
   }, [contagens]);
 
-  // Refresh agora recarrega do Firebase
+  // Refresh agora recarrega do Firebase (fetch único)
   const handleRefreshLeads = async () => {
     await fetchLeadsFromFirebase();
     // atualizar flags de edição para os leads recém-buscados
@@ -204,7 +274,8 @@ const Leads = ({
   };
 
   const gerais = leadsData.filter((lead) => {
-    if (lead.status === 'Fechado' || lead.status === 'Perdido') return false;
+    const s = lead.status ?? '';
+    if (s === 'Fechado' || s === 'Perdido') return false;
 
     if (filtroStatus) {
       if (filtroStatus === 'Agendado') {
@@ -221,7 +292,7 @@ const Leads = ({
     }
 
     if (filtroData) {
-      const leadMesAno = lead.createdAt ? (typeof lead.createdAt === 'object' && typeof lead.createdAt.toDate === 'function' ? lead.createdAt.toDate().toISOString().substring(0,7) : (String(lead.createdAt).substring(0,7))) : '';
+      const leadMesAno = lead.createdAt ? (String(lead.createdAt).substring(0,7)) : '';
       return leadMesAno === filtroData;
     }
 
@@ -255,7 +326,8 @@ const Leads = ({
       if (Object.keys(dataToUpdate).length > 0) {
         await updateDoc(leadRef, dataToUpdate);
       }
-      await fetchLeadsFromFirebase();
+      // não é necessário forçar fetch se onSnapshot estiver ativo, mas mantemos comportamento seguro
+      // await fetchLeadsFromFirebase();
     } catch (error) {
       console.error('Erro ao enviar lead atualizado para Firebase:', error);
     }
@@ -311,7 +383,7 @@ const Leads = ({
     try {
       const leadRef = doc(db, 'leads', leadId);
       await updateDoc(leadRef, { usuarioId: null, responsavel: null });
-      await fetchLeadsFromFirebase();
+      // não é necessário fetch manual porque o listener atualiza automaticamente
     } catch (error) {
       console.error('Erro ao alterar atribuição no Firebase:', error);
       alert('Erro ao alterar atribuição. Veja o console.');
@@ -344,25 +416,14 @@ const Leads = ({
 
   const formatarData = (dataStr) => {
     if (!dataStr) return '';
-    // Trata Timestamp do Firestore
-    if (typeof dataStr === 'object' && typeof dataStr.toDate === 'function') {
-      return dataStr.toDate().toLocaleDateString('pt-BR');
-    }
-    let data;
-    if (typeof dataStr === 'string' && dataStr.includes('/')) {
-      const partes = dataStr.split('/');
-      data = new Date(parseInt(partes[2]), parseInt(partes[1]) - 1, parseInt(partes[0]));
-    } else if (typeof dataStr === 'string' && dataStr.includes('-') && dataStr.length === 10) {
-      const partes = dataStr.split('-');
-      data = new Date(parseInt(partes[0]), parseInt(partes[1]) - 1, parseInt(partes[2]));
-    } else {
-      data = new Date(dataStr);
-    }
-
-    if (isNaN(data.getTime())) {
+    // Trata ISO string ou Timestamp
+    try {
+      const d = new Date(dataStr);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('pt-BR');
+    } catch {
       return '';
     }
-    return data.toLocaleDateString('pt-BR');
   };
 
   const handleObservacaoChange = (leadId, text) => {
@@ -392,7 +453,7 @@ const Leads = ({
       const leadRef = doc(db, 'leads', leadId);
       await updateDoc(leadRef, { observacao: observacaoTexto });
       setIsEditingObservacao((prev) => ({ ...prev, [leadId]: false }));
-      await fetchLeadsFromFirebase();
+      // não é necessário chamar fetchLeadsFromFirebase devido ao onSnapshot
     } catch (error) {
       console.error('Erro ao salvar observação no Firebase:', error);
       alert('Erro ao salvar observação. Por favor, tente novamente.');
@@ -427,11 +488,10 @@ const Leads = ({
       });
     }
 
-    // Primeiro notifica o parent para lógica de UI/estado global (se existir)
+    // Notifica o parent
     try {
       onUpdateStatus && onUpdateStatus(leadId, novoStatus, phoneOrDate);
     } catch (err) {
-      // não falhar se parent não estiver presente
       console.warn('onUpdateStatus disparado, mas houve erro/ausência:', err);
     }
 
@@ -439,19 +499,14 @@ const Leads = ({
     try {
       const leadRef = doc(db, 'leads', leadId);
 
-      // Determinar status final e data de agendamento (dd/mm/yyyy) se aplicável
       let finalStatus = novoStatus;
       let agendamento = null;
 
-      // Caso o componente envie 'Agendar' com uma data no terceiro argumento (phoneOrDate),
-      // ou envie 'Agendado - dd/mm/yyyy' como novoStatus, tratamos ambos.
       if (novoStatus === 'Agendar') {
-        // Se o terceiro argumento contém a data no formato dd/mm/yyyy, usa-a
         if (isValidDDMMYYYY(phoneOrDate)) {
           agendamento = phoneOrDate;
           finalStatus = `Agendado - ${agendamento}`;
         } else {
-          // Se não vier data, marcamos apenas como 'Agendado'
           finalStatus = 'Agendado';
           agendamento = null;
         }
@@ -465,31 +520,24 @@ const Leads = ({
           agendamento = null;
         }
       } else {
-        // Outros status: Fechado, Perdido, Em Contato, Sem Contato, etc.
         finalStatus = novoStatus;
         agendamento = null;
       }
 
-      // Prepara objeto de atualização
       const dataToUpdate = { status: finalStatus };
 
-      // Se tiver phone (número) passado e quiser salvar como 'phone' ou 'telefone'
       if (phoneOrDate && typeof phoneOrDate === 'string' && !isValidDDMMYYYY(phoneOrDate)) {
-        // assumimos que é telefone
         dataToUpdate.phone = phoneOrDate;
       }
 
-      // Se houver observação atual no state, atualizamos também
       const observacaoAtual = observacoes[leadId];
       if (observacaoAtual && observacaoAtual.trim() !== '') {
         dataToUpdate.observacao = observacaoAtual;
       }
 
-      // Atualiza campo de agendamento (salva dd/mm/yyyy) ou remove se for null
       if (agendamento) {
         dataToUpdate.agendamento = agendamento;
       } else {
-        // se quiser limpar o campo quando não há agendamento, define null
         dataToUpdate.agendamento = null;
       }
 
@@ -504,7 +552,7 @@ const Leads = ({
         setIsEditingObservacao((prev) => ({ ...prev, [leadId]: false }));
       }
 
-      await fetchLeadsFromFirebase();
+      // onSnapshot cuidará de atualizar leadsData
     } catch (error) {
       console.error('Erro ao atualizar status no Firebase:', error);
       alert('Erro ao atualizar status. Veja o console.');
@@ -554,7 +602,7 @@ const Leads = ({
               >
                 <Bell size={32} className="text-red-500" />
                 <div className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold ring-2 ring-white">
-                  1
+                  {contagens.agendadosHoje}
                 </div>
                 {showNotification && (
                   <div className="absolute top-10 right-0 w-64 bg-white border border-gray-200 rounded-lg p-3 shadow-xl z-10">
