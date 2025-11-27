@@ -12,6 +12,9 @@ import GerenciarUsuarios from './pages/GerenciarUsuarios';
 import Ranking from './pages/Ranking';
 import CriarLead from './pages/CriarLead';
 
+import { db } from './firebase';
+import { collection, getDocs } from 'firebase/firestore';
+
 // Este componente agora vai rolar o elemento com a ref para o topo
 function ScrollToTop({ scrollContainerRef }) {
   const { pathname } = useLocation();
@@ -286,25 +289,23 @@ function App() {
   // ------------------ FETCH USUÁRIOS ------------------
   const fetchUsuariosForLogin = async () => {
     try {
-      const response = await fetch(GOOGLE_SHEETS_USERS_AUTH_URL);
-      const data = await response.json();
-
-      if (Array.isArray(data)) {
-        setUsuarios(data.map(item => ({
-          id: item.id || '',
-          usuario: item.usuario || '',
-          nome: item.nome || '',
-          email: item.email || '',
-          senha: item.senha || '',
-          status: item.status || 'Ativo',
-          tipo: item.tipo || 'Usuario',
-        })));
-      } else {
-        setUsuarios([]);
-        console.warn('Resposta inesperada ao buscar usuários para login:', data);
-      }
+      const snapshot = await getDocs(collection(db, 'usuarios'));
+      const users = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() || {};
+        users.push({
+          id: docSnap.id,
+          usuario: data.usuario ?? '',
+          nome: data.nome ?? '',
+          email: data.email ?? '',
+          senha: data.senha ?? '',
+          status: data.status ?? 'Ativo',
+          tipo: data.tipo ?? 'Usuario',
+        });
+      });
+      setUsuarios(users);
     } catch (error) {
-      console.error('Erro ao buscar usuários para login:', error);
+      console.error('Erro ao buscar usuários do Firebase:', error);
       setUsuarios([]);
     }
   };
