@@ -297,7 +297,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     // <<< FIM NOVO HANDLER >>>
 
     const handlePremioLiquidoChange = (id, valor) => {
-        let cleanedValue = valor.replace(/[^\d,\.]/g, '');
+        let cleanedValue = valor.replace(/[^\\d,\\.]/g, '');
         const commaParts = cleanedValue.split(',');
         if (commaParts.length > 2) {
             cleanedValue = commaParts[0] + ',' + commaParts.slice(1).join('');
@@ -341,7 +341,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     };
 
     const handleComissaoChange = (id, valor) => {
-        let cleanedValue = valor.replace(/[^\d,]/g, '');
+        let cleanedValue = valor.replace(/[^\\d,]/g, '');
         const parts = cleanedValue.split(',');
         if (parts.length > 2) {
             cleanedValue = parts[0] + ',' + parts.slice(1).join('');
@@ -473,7 +473,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     };
 
     const handleRefresh = () => {
-        fetchLeadsFechadosFromFirebase();
+        fetchLeadsFechadosFromFirebase(isAdmin, currentUser);
     };
 
 
