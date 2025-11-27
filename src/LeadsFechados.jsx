@@ -29,27 +29,11 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         const mes = String(hoje.getMonth() + 1).padStart(2, '0');
         return `${ano}-${mes}`; // Formato: AAAA-MM
     };
-    const [dataInput, setDataInput] = useState('');
+    const [dataInput, setDataInput] = useState(getMesAnoAtual());
     const [filtroNome, setFiltroNome] = useState('');
     const [filtroData, setFiltroData] = useState(getMesAnoAtual());
     const [premioLiquidoInputDisplay, setPremioLiquidoInputDisplay] = useState({});
 
-
-    const formatarMesAno = (mesAnoString) => {
-        const meses = {
-            "janeiro": "01", "fevereiro": "02", "março": "03", "abril": "04", "maio": "05", "junho": "06",
-            "julho": "07", "agosto": "08", "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12"
-        };
-        const partes = mesAnoString.toLowerCase().split(' de ');
-        if (partes.length === 2) {
-            const [mesNome, ano] = partes;
-            const mesNumero = meses[mesNome];
-            if (mesNumero && !isNaN(parseInt(ano))) {
-                return `${ano}-${mesNumero}`;
-            }
-        }
-        return '';
-    };
 
     // --- FUNÇÕES DE LÓGICA ---
 
@@ -115,8 +99,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     };
 
     const aplicarFiltroData = () => {
-        const filtroFormatado = formatarMesAno(dataInput);
-        setFiltroData(filtroFormatado);
+        setFiltroData(dataInput); // dataInput está no formato AAAA-MM
         setFiltroNome('');
         setNomeInput('');
         setPaginaAtual(1);
@@ -527,7 +510,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
             <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4 mb-4">
                     <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
-                        <CheckCircle size={32} className="text-green-500 mr-3" />
+                        <CheckCircle size={32} className="mr-3 text-green-500" />
                         Leads Fechados
                     </h1>
 
@@ -563,12 +546,11 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                     {/* Filtro de Data */}
                     <div className="flex items-center gap-2 flex-1 min-w-[200px] justify-end">
                         <input
-                            type="text"
-                            placeholder="Ex: Novembro de 2025"
+                            type="month"
                             value={dataInput}
                             onChange={(e) => setDataInput(e.target.value)}
-                            className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm"
-                            title="Filtrar por Mês/Ano de Vigência Inicial"
+                            className="p-3 border border-gray-300 rounded-lg text-sm cursor-pointer"
+                            title="Filtrar por Mês/Ano de Criação"
                         />
                         <button
                             onClick={aplicarFiltroData}
@@ -800,7 +782,7 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                                     <div className="mb-4">
                                         <label htmlFor={`vigencia-inicio-${lead.ID}`} className="text-xs font-semibold text-gray-600 block mb-1">Início</label>
                                         <input
-                                            id={`vigencia-inicio-${lead.ID}`}
+                                            id={`vigencia-inicio-${lead}`}
                                             type="date"
                                             value={vigencia[`${lead.ID}`]?.inicio || ''}
                                             onChange={(e) => handleVigenciaInicioChange(lead.ID, e.target.value)}
