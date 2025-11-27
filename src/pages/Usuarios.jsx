@@ -1,116 +1,149 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, RefreshCcw } from 'lucide-react'; // Adicionado RefreshCcw para o ícone de refresh
+import { Eye, EyeOff, RefreshCcw } from 'lucide-react';
+import { db } from '../firebase';
+import {
+  collection,
+  getDocs,
+  onSnapshot,
+  doc,
+  updateDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 
-// Certifique-se de que esta URL é a da SUA ÚLTIMA IMPLANTAÇÃO do Apps Script.
-// Ela deve ser a mesma URL base usada para as requisições POST/GET.
-const GOOGLE_SHEETS_BASE_URL = '/api/gas'; // <-- ATUALIZE ESTA LINHA COM A URL REAL DA SUA IMPLANTAÇÃO
-
-const GerenciarUsuarios = () => {
+const Usuarios = () => {
   const [usuarios, setUsuarios] = useState([]);
-  const [loading, setLoading] = useState(true); 
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [senhaVisivel, setSenhaVisivel] = useState({}); 
-  const [isRefreshing, setIsRefreshing] = useState(false); 
+  const [senhaVisivel, setSenhaVisivel] = useState({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Função para buscar usuários do Google Sheets
-  const fetchUsuariosFromSheet = async () => {
+  const normalizeUser = (docId, data = {}) => {
+    return {
+      id: String(docId),
+      usuario: data.usuario ?? data.login ?? data.user ?? '',
+      nome: data.nome ?? data.name ?? '',
+      email: data.email ?? '',
+      senha: data.senha ?? data.password ?? '',
+      status: data.status ?? 'Ativo',
+      tipo: data.tipo ?? data.type ?? 'Usuario',
+      createdAt: data.createdAt ?? null,
+      updatedAt: data.updatedAt ?? null,
+      ...data,
+    };
+  };
+
+  // Listener em tempo real
+  useEffect(() => {
+    setLoading(true);
     setError(null);
+
     try {
-      const response = await fetch(`${GOOGLE_SHEETS_BASE_URL}?v=pegar_usuario`);
-      
-      if (!response.ok) {
-        throw new Error(`Erro HTTP: ${response.status} - ${response.statusText}`);
-      }
+      const collRef = collection(db, 'usuarios');
+      const unsub = onSnapshot(
+        collRef,
+        (snapshot) => {
+          const lista = snapshot.docs.map((d) => normalizeUser(d.id, d.data()));
 
-      const data = await response.json();
+          lista.sort((a, b) => {
+            const na = (a.nome || '').toLowerCase();
+            const nb = (b.nome || '').toLowerCase();
+            return na.localeCompare(nb);
+          });
 
-      if (Array.isArray(data)) {
-        const formattedUsuarios = data.map((item) => ({
-          id: item.id || '',
-          usuario: item.usuario || '',
-          nome: item.nome || '',
-          email: item.email || '',
-          senha: item.senha || '',
-          status: item.status || 'Ativo',
-          tipo: item.tipo || 'Usuario',
-        }));
-        setUsuarios(formattedUsuarios);
-      } else {
-        console.warn('Dados recebidos não são um array:', data);
-        setUsuarios([]);
-      }
+          setUsuarios(lista);
+          setLoading(false);
+          setIsRefreshing(false);
+        },
+        (err) => {
+          console.error('Erro no listener de usuários:', err);
+          setError('Erro ao carregar usuários. Tente novamente mais tarde.');
+          setLoading(false);
+          setIsRefreshing(false);
+        }
+      );
+
+      // atualiza a cada 60s (opcional, mantém listener como fonte principal)
+      const interval = setInterval(() => {
+        fetchUsuariosFromFirebase();
+      }, 60000);
+
+      return () => {
+        unsub();
+        clearInterval(interval);
+      };
     } catch (err) {
-      console.error('Erro ao buscar usuários do Google Sheets:', err);
+      console.error('Erro ao iniciar listener de usuários:', err);
+      setError('Erro ao carregar usuários. Tente novamente mais tarde.');
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetch manual para botão refresh
+  const fetchUsuariosFromFirebase = async () => {
+    setError(null);
+    setIsRefreshing(true);
+    try {
+      const querySnapshot = await getDocs(collection(db, 'usuarios'));
+      const lista = [];
+      querySnapshot.forEach((docSnap) => {
+        lista.push(normalizeUser(docSnap.id, docSnap.data()));
+      });
+
+      lista.sort((a, b) => {
+        const na = (a.nome || '').toLowerCase();
+        const nb = (b.nome || '').toLowerCase();
+        return na.localeCompare(nb);
+      });
+
+      setUsuarios(lista);
+    } catch (err) {
+      console.error('Erro ao buscar usuários do Firebase:', err);
       setError('Erro ao carregar usuários. Tente novamente mais tarde.');
       setUsuarios([]);
     } finally {
-      setLoading(false); 
-      setIsRefreshing(false); 
+      setIsRefreshing(false);
+      setLoading(false);
     }
   };
 
-  // Função para lidar com o refresh e ativar/desativar o loader
   const handleRefresh = async () => {
-    setIsRefreshing(true); 
-    await fetchUsuariosFromSheet();
+    setIsRefreshing(true);
+    await fetchUsuariosFromFirebase();
   };
 
-  // useEffect para buscar usuários na montagem e configurar o intervalo de atualização
-  useEffect(() => {
-    setLoading(true); 
-    fetchUsuariosFromSheet(); 
-
-    const interval = setInterval(() => {
-      console.log('Atualizando lista de usuários automaticamente...');
-      fetchUsuariosFromSheet();
-    }, 60000); 
-
-    return () => clearInterval(interval);
-  }, []); 
-
-  // Função para atualizar status ou tipo de usuário no Google Sheets
+  // Atualiza status / tipo do usuário no Firestore (com atualização otimista)
   const atualizarStatusUsuario = async (id, novoStatus = null, novoTipo = null) => {
-    const usuarioParaAtualizar = usuarios.find((u) => String(u.id) === String(id));
-    if (!usuarioParaAtualizar) {
+    const index = usuarios.findIndex((u) => String(u.id) === String(id));
+    if (index === -1) {
       console.warn(`Usuário com ID ${id} não encontrado localmente para atualização.`);
       return;
     }
 
-    const usuarioParaEnviar = { ...usuarioParaAtualizar };
+    const usuarioAtual = usuarios[index];
+    const novoEstado = { ...usuarioAtual };
+    if (novoStatus !== null) novoEstado.status = novoStatus;
+    if (novoTipo !== null) novoEstado.tipo = novoTipo;
 
-    if (novoStatus !== null) usuarioParaEnviar.status = novoStatus;
-    if (novoTipo !== null) usuarioParaEnviar.tipo = novoTipo;
+    // atualização otimista local
+    setUsuarios((prev) => prev.map((u, i) => (i === index ? novoEstado : u)));
 
     try {
-      console.log('Enviando solicitação de atualização para Apps Script:', usuarioParaEnviar);
-      
-      await fetch(`${GOOGLE_SHEETS_BASE_URL}?v=alterar_usuario`, {
-        method: 'POST',
-        body: JSON.stringify({ usuario: usuarioParaEnviar }),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+      const userRef = doc(db, 'usuarios', String(id));
+      const dataToUpdate = {};
+      if (novoStatus !== null) dataToUpdate.status = novoStatus;
+      if (novoTipo !== null) dataToUpdate.tipo = novoTipo;
+      dataToUpdate.updatedAt = serverTimestamp();
 
-      console.log('Solicitação de atualização para o usuário enviada ao Apps Script (modo no-cors).');
-      console.log('Por favor, verifique os logs de execução do Google Apps Script para confirmação de sucesso e possíveis erros.');
-
-      // Otimisticamente, atualiza o estado local para que a UI responda imediatamente
-      setUsuarios((prev) =>
-        prev.map((u) =>
-          String(u.id) === String(id)
-            ? {
-                ...u,
-                ...(novoStatus !== null ? { status: novoStatus } : {}),
-                ...(novoTipo !== null ? { tipo: novoTipo } : {}),
-              }
-            : u
-        )
-      );
-
+      await updateDoc(userRef, dataToUpdate);
+      // listener onSnapshot irá sincronizar o estado se houver mudanças adicionais
     } catch (err) {
-      console.error('Erro ao enviar atualização de usuário para o Apps Script:', err);
+      console.error('Erro ao atualizar usuário no Firebase:', err);
       alert('Erro ao atualizar usuário. Por favor, tente novamente.');
+
+      // reverte alteração local em caso de erro
+      setUsuarios((prev) => prev.map((u, i) => (i === index ? usuarioAtual : u)));
     }
   };
 
@@ -120,7 +153,7 @@ const GerenciarUsuarios = () => {
   };
 
   const handleToggleTipo = (id, tipoAtual) => {
-    const novoTipo = tipoAtual === 'Admin' ? 'Usuario' : 'Admin'; 
+    const novoTipo = tipoAtual === 'Admin' ? 'Usuario' : 'Admin';
     atualizarStatusUsuario(id, null, novoTipo);
   };
 
@@ -179,7 +212,7 @@ const GerenciarUsuarios = () => {
           <tbody>
             {usuarios.length > 0 ? (
               usuarios.map((usuario) => (
-                <tr key={usuario.id} className="border-b hover:bg-gray-50 transition"> {/* Exatamente como seu código */}
+                <tr key={usuario.id} className="border-b hover:bg-gray-50 transition">
                   <td className="py-3 px-6">{usuario.id}</td>
                   <td className="py-3 px-6">{usuario.nome}</td>
                   <td className="py-3 px-6">{usuario.usuario}</td>
@@ -190,11 +223,12 @@ const GerenciarUsuarios = () => {
                         type={senhaVisivel[usuario.id] ? 'text' : 'password'}
                         value={usuario.senha}
                         readOnly
-                        className="border rounded px-2 py-1 w-32 text-sm" {/* Exatamente como seu código */}
+                        className="border rounded px-2 py-1 w-32 text-sm"
                       />
                       <button
                         onClick={() => toggleVisibilidadeSenha(usuario.id)}
-                        className="text-gray-500 hover:text-gray-700" {/* Exatamente como seu código */}
+                        className="text-gray-500 hover:text-gray-700"
+                        title={senhaVisivel[usuario.id] ? 'Ocultar senha' : 'Mostrar senha'}
                       >
                         {senhaVisivel[usuario.id] ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
@@ -225,16 +259,16 @@ const GerenciarUsuarios = () => {
                         usuario.status === 'Ativo'
                           ? 'bg-red-500 text-white hover:bg-red-600'
                           : 'bg-green-500 text-white hover:bg-green-600'
-                      } transition`} {/* Exatamente como seu código, com 'transition' */}
+                      } transition`}
                     >
                       {usuario.status === 'Ativo' ? 'Desativar' : 'Ativar'}
                     </button>
-                    <label className="flex items-center gap-1 text-sm"> {/* Exatamente como seu código */}
+                    <label className="flex items-center gap-1 text-sm">
                       <input
                         type="checkbox"
                         checked={usuario.tipo === 'Admin'}
                         onChange={() => handleToggleTipo(usuario.id, usuario.tipo)}
-                        className="form-checkbox h-4 w-4 text-blue-600" {/* Exatamente como seu código */}
+                        className="form-checkbox h-4 w-4 text-blue-600"
                       />
                       Admin
                     </label>
@@ -253,4 +287,4 @@ const GerenciarUsuarios = () => {
   );
 };
 
-export default GerenciarUsuarios;
+export default Usuarios;
