@@ -29,10 +29,27 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
         const mes = String(hoje.getMonth() + 1).padStart(2, '0');
         return `${ano}-${mes}`; // Formato: AAAA-MM
     };
-    const [dataInput, setDataInput] = useState(getMesAnoAtual());
+    const [dataInput, setDataInput] = useState('');
     const [filtroNome, setFiltroNome] = useState('');
     const [filtroData, setFiltroData] = useState(getMesAnoAtual());
     const [premioLiquidoInputDisplay, setPremioLiquidoInputDisplay] = useState({});
+
+
+    const formatarMesAno = (mesAnoString) => {
+        const meses = {
+            "janeiro": "01", "fevereiro": "02", "março": "03", "abril": "04", "maio": "05", "junho": "06",
+            "julho": "07", "agosto": "08", "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12"
+        };
+        const partes = mesAnoString.toLowerCase().split(' de ');
+        if (partes.length === 2) {
+            const [mesNome, ano] = partes;
+            const mesNumero = meses[mesNome];
+            if (mesNumero && !isNaN(parseInt(ano))) {
+                return `${ano}-${mesNumero}`;
+            }
+        }
+        return '';
+    };
 
     // --- FUNÇÕES DE LÓGICA ---
 
@@ -98,7 +115,8 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     };
 
     const aplicarFiltroData = () => {
-        setFiltroData(dataInput); // dataInput está no formato AAAA-MM
+        const filtroFormatado = formatarMesAno(dataInput);
+        setFiltroData(filtroFormatado);
         setFiltroNome('');
         setNomeInput('');
         setPaginaAtual(1);
@@ -244,9 +262,9 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
             );
         } else if (filtroData) {
             leadsFiltrados = fechadosOrdenados.filter(lead => {
-                const dataLeadFormatada = getDataParaComparacao(lead.Data);
-                const dataLeadMesAno = dataLeadFormatada ? dataLeadFormatada.substring(0, 7) : '';
-                return dataLeadMesAno === filtroData;
+                if (!lead.VigenciaInicial) return false;
+                const vigenciaMesAno = lead.VigenciaInicial.substring(0, 7);
+                return vigenciaMesAno === filtroData;
             });
         } else {
             leadsFiltrados = fechadosOrdenados;
@@ -545,11 +563,12 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
                     {/* Filtro de Data */}
                     <div className="flex items-center gap-2 flex-1 min-w-[200px] justify-end">
                         <input
-                            type="month"
+                            type="text"
+                            placeholder="Ex: Novembro de 2025"
                             value={dataInput}
                             onChange={(e) => setDataInput(e.target.value)}
                             className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm"
-                            title="Filtrar por Mês/Ano de Criação"
+                            title="Filtrar por Mês/Ano de Vigência Inicial"
                         />
                         <button
                             onClick={aplicarFiltroData}
