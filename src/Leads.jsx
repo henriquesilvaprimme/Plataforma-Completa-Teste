@@ -42,10 +42,10 @@ const Leads = ({
   const [modalNome, setModalNome] = useState('');
   const [modalSeguradora, setModalSeguradora] = useState('');
   const [modalMeioPagamento, setModalMeioPagamento] = useState('');
-  const [modalCartaoPortoNovo, setModalCartaoPortoNovo] = useState(false);
+  const [modalCartaoPortoNovo, setModalCartaoPortoNovo] = useState('Não'); // 'Sim' | 'Não'
   const [modalPremioLiquido, setModalPremioLiquido] = useState('');
   const [modalComissao, setModalComissao] = useState('');
-  const [modalParcelamento, setModalParcelamento] = useState('');
+  const [modalParcelamento, setModalParcelamento] = useState('1');
   const [modalVigenciaInicial, setModalVigenciaInicial] = useState('');
   const [modalVigenciaFinal, setModalVigenciaFinal] = useState('');
   const [isSubmittingClose, setIsSubmittingClose] = useState(false);
@@ -764,15 +764,48 @@ const Leads = ({
     return toDateInputValue(d);
   };
 
+  // Formatação de moeda para input: aceita digitação de números e formata como R$
+  const formatCurrencyFromDigits = (digits) => {
+    if (!digits) return '';
+    const int = parseInt(digits, 10);
+    if (isNaN(int)) return '';
+    const value = int / 100;
+    return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const extractDigits = (str = '') => (str ? String(str).replace(/\D/g, '') : '');
+
+  const handlePremioChange = (e) => {
+    const raw = e.target.value;
+    // permitimos que o usuário cole ou digite já formatado; extraímos dígitos e formatamos
+    const digits = extractDigits(raw);
+    const formatted = digits ? formatCurrencyFromDigits(digits) : '';
+    setModalPremioLiquido(formatted);
+  };
+
+  // Comissão: mantemos número inteiro e adicionamos '%'
+  const handleComissaoChange = (e) => {
+    const raw = e.target.value;
+    const digits = extractDigits(raw).slice(0, 3); // até 3 dígitos (ex: 100%)
+    if (!digits) {
+      setModalComissao('');
+      return;
+    }
+    setModalComissao(`${parseInt(digits, 10)}%`);
+  };
+
   const openClosingModal = (lead) => {
     setClosingLead(lead);
     setModalNome(lead.Nome || lead.name || lead.nome || '');
     setModalSeguradora(lead.Seguradora || lead.insurer || '');
-    setModalMeioPagamento(lead.MeioPagamento || lead.MeioPagamento || '');
-    setModalCartaoPortoNovo(Boolean(lead.CartaoPortoNovo));
-    setModalPremioLiquido(lead.PremioLiquido ?? lead.premioLiquido ?? '');
-    setModalComissao(lead.Comissao ?? lead.comissao ?? '');
-    setModalParcelamento(lead.Parcelamento ?? lead.parcelamento ?? '');
+    setModalMeioPagamento(lead.MeioPagamento || '');
+    // CartaoPortoNovo deve ser 'Sim' ou 'Não'
+    setModalCartaoPortoNovo(lead.CartaoPortoNovo ? String(lead.CartaoPortoNovo) : 'Não');
+    setModalPremioLiquido(lead.PremioLiquido ? String(lead.PremioLiquido) : '');
+    // se a comissao vier como '10%' mantém; se vier '10' converte
+    const com = lead.Comissao ?? lead.comissao ?? '';
+    setModalComissao(com ? (String(com).includes('%') ? String(com) : `${String(extractDigits(com) || com)}%`) : '');
+    setModalParcelamento(lead.Parcelamento ? String(lead.Parcelamento) : '1');
     const hoje = new Date();
     setModalVigenciaInicial(toDateInputValue(hoje));
     setModalVigenciaFinal(addOneYearDateInputValue(hoje));
@@ -783,6 +816,9 @@ const Leads = ({
     setIsClosingModalOpen(false);
     setClosingLead(null);
     setIsSubmittingClose(false);
+    // reset modal values (opcional)
+    // setModalNome('');
+    // ...
   };
 
   // Ao submeter o fechamento (Concluir Venda)
@@ -810,7 +846,7 @@ const Leads = ({
         usuarioId: closingLead.usuarioId ?? null,
         Seguradora: modalSeguradora || '',
         MeioPagamento: modalMeioPagamento || '',
-        CartaoPortoNovo: modalCartaoPortoNovo ? 'Sim' : 'Não',
+        CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
         PremioLiquido: modalPremioLiquido || '',
         Comissao: modalComissao || '',
         Parcelamento: modalParcelamento || '',
@@ -838,7 +874,7 @@ const Leads = ({
         Comissao: modalComissao || '',
         Parcelamento: modalParcelamento || '',
         MeioPagamento: modalMeioPagamento || '',
-        CartaoPortoNovo: modalCartaoPortoNovo ? 'Sim' : 'Não',
+        CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
         VigenciaInicial: vigIniISO || '',
         VigenciaFinal: vigFinISO || '',
         Nome: modalNome,
@@ -858,7 +894,7 @@ const Leads = ({
             Comissao: modalComissao || '',
             Parcelamento: modalParcelamento || '',
             MeioPagamento: modalMeioPagamento || '',
-            CartaoPortoNovo: modalCartaoPortoNovo ? 'Sim' : 'Não',
+            CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
             VigenciaInicial: vigIniISO || '',
             VigenciaFinal: vigFinISO || '',
             Nome: modalNome,
@@ -877,6 +913,27 @@ const Leads = ({
       setIsSubmittingClose(false);
     }
   };
+
+  // Listas fixas
+  const seguradoraOptions = [
+    '',
+    'Porto Seguro',
+    'Azul Seguros',
+    'Itau Seguros',
+    'Tokio Marine',
+    'Yelum Seguros',
+    'Suhai Seguros',
+    'Allianz Seguros',
+    'Bradesco Seguros',
+    'Mitsui Seguros',
+    'Hdi Seguros',
+    'Aliro Seguros',
+    'Zurich Seguros',
+    'Alfa Seguros',
+    'Demais Seguradoras',
+  ];
+
+  const meioPagamentoOptions = ['', 'CP', 'CC', 'Debito', 'Boleto'];
 
   return (
     <div className="p-4 md:p-6 lg:p-8 relative min-h-screen bg-gray-100 font-sans">
@@ -1172,39 +1229,93 @@ const Leads = ({
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700">Seguradora</label>
-                <input value={modalSeguradora} onChange={(e) => setModalSeguradora(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+                <select
+                  value={modalSeguradora}
+                  onChange={(e) => setModalSeguradora(e.target.value)}
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                >
+                  {seguradoraOptions.map((opt) => (
+                    <option key={opt} value={opt}>{opt === '' ? '— selecione —' : opt}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700">Meio de pagamento</label>
-                <input value={modalMeioPagamento} onChange={(e) => setModalMeioPagamento(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+                <select
+                  value={modalMeioPagamento}
+                  onChange={(e) => {
+                    setModalMeioPagamento(e.target.value);
+                    // se mudar para CP inicia Cartao como 'Não' por padrão
+                    if (e.target.value === 'CP' && (!modalCartaoPortoNovo || modalCartaoPortoNovo === '')) {
+                      setModalCartaoPortoNovo('Não');
+                    }
+                    // se tirar CP, limpa CartaoPortoNovo
+                    if (e.target.value !== 'CP') {
+                      setModalCartaoPortoNovo('Não');
+                    }
+                  }}
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                >
+                  {meioPagamentoOptions.map((m) => (
+                    <option key={m} value={m}>{m === '' ? '— selecione —' : m}</option>
+                  ))}
+                </select>
               </div>
 
-              <div className="col-span-1 md:col-span-2 flex items-center gap-3">
-                <label className="block text-sm font-semibold text-gray-700">Cartão Porto Seguro Novo?</label>
-                <input type="checkbox" checked={modalCartaoPortoNovo} onChange={(e) => setModalCartaoPortoNovo(e.target.checked)} className="ml-2" />
-              </div>
+              {/* Cartao Porto Seguro Novo: aparece somente se MeioPagamento === 'CP' */}
+              {modalMeioPagamento === 'CP' && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700">Cartão Porto Seguro Novo?</label>
+                  <select
+                    value={modalCartaoPortoNovo}
+                    onChange={(e) => setModalCartaoPortoNovo(e.target.value)}
+                    className="mt-1 w-full p-2 border rounded text-sm"
+                  >
+                    <option value="Sim">Sim</option>
+                    <option value="Não">Não</option>
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700">Prêmio Líquido</label>
-                <input value={modalPremioLiquido} onChange={(e) => setModalPremioLiquido(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+                <input
+                  value={modalPremioLiquido}
+                  onChange={handlePremioChange}
+                  placeholder="R$ 0,00"
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                />
               </div>
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700">Comissão</label>
-                <input value={modalComissao} onChange={(e) => setModalComissao(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+                <input
+                  value={modalComissao}
+                  onChange={handleComissaoChange}
+                  placeholder="10%"
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                />
               </div>
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700">Parcelamento</label>
-                <input value={modalParcelamento} onChange={(e) => setModalParcelamento(e.target.value)} className="mt-1 w-full p-2 border rounded text-sm" />
+                <select
+                  value={modalParcelamento}
+                  onChange={(e) => setModalParcelamento(e.target.value)}
+                  className="mt-1 w-full p-2 border rounded text-sm"
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={String(n)}>{String(n)}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700">Vigência Inicial</label>
                 <input type="date" value={modalVigenciaInicial} onChange={(e) => {
                   setModalVigenciaInicial(e.target.value);
-                  // se o usuário alterar a inicial, atualiza a final automaticamente para +1 ano
+                  // atualiza final automaticamente para +1 ano quando inicial muda
                   try {
                     const d = new Date(`${e.target.value}T00:00:00`);
                     d.setFullYear(d.getFullYear() + 1);
