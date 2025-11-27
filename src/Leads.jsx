@@ -37,6 +37,7 @@ const Leads = ({
   // Normaliza um documento do Firestore para o formato esperado pelo React
   const normalizeLead = (docId, data = {}) => {
     const safe = (v) => (v === undefined || v === null ? '' : v);
+
     const toISO = (v) => {
       if (!v && v !== 0) return '';
       if (typeof v === 'object' && typeof v.toDate === 'function') {
@@ -50,36 +51,83 @@ const Leads = ({
       }
     };
 
-    const name = safe(data.name ?? data.Name ?? data.nome ?? data.Nome);
-    const vehicleModel = safe(
-      data.vehicleModel ?? data.vehiclemodel ?? data.modelo ?? data.Modelo
-    );
-    const vehicleYearModel = safe(
-      data.vehicleYearModel ?? data.vehicleyearmodel ?? data.anoModelo ?? data.ano
-    );
-    const city = safe(data.city ?? data.Cidade ?? data.cidade);
-    const phone = safe(
-      data.phone ?? data.Telefone ?? data.telefone ?? data.phoneNumber
-    );
-    const insuranceType = safe(
-      data.insuranceType ?? data.insurancetype ?? data.tipoSeguro ?? data.tipo_de_seguro
-    );
+    // Nome
+    const nomeVal =
+      safe(data.Nome) ||
+      safe(data.nome) ||
+      safe(data.Name) ||
+      safe(data.name) ||
+      safe(data['Nome Completo']) ||
+      '';
+
+    // Modelo do veículo - mapeia várias variações possíveis de campo do formulário
+    const modeloVal =
+      safe(data.Modelo) ||
+      safe(data.modelo) ||
+      safe(data['Modelo do Veículo']) ||
+      safe(data['modelo do veículo']) ||
+      safe(data.modeloVeiculo) ||
+      safe(data.ModeloVeiculo) ||
+      safe(data.vehicleModel) ||
+      safe(data.vehicle_model) ||
+      safe(data.model) ||
+      '';
+
+    // Ano / Modelo
+    const anoModeloVal =
+      safe(data.AnoModelo) ||
+      safe(data.anoModelo) ||
+      safe(data.Ano) ||
+      safe(data.ano) ||
+      safe(data.vehicleYearModel) ||
+      safe(data.vehicle_year) ||
+      '';
+
+    // Cidade
+    const cidadeVal =
+      safe(data.Cidade) || safe(data.cidade) || safe(data.city) || '';
+
+    // Telefone
+    const telefoneVal =
+      safe(data.Telefone) || safe(data.telefone) || safe(data.phone) || '';
+
+    // Tipo Seguro
+    const tipoSeguroVal =
+      safe(data.TipoSeguro) ||
+      safe(data.tipoSeguro) ||
+      safe(data.insuranceType) ||
+      safe(data.tipo_de_seguro) ||
+      '';
 
     return {
       id: String(docId),
       ID: data.ID ?? data.id ?? docId,
-      name,
-      nome: name,
-      vehicleModel,
-      vehicleYearModel,
-      city,
-      phone,
-      insuranceType,
+      Nome: nomeVal,
+      name: nomeVal,
+      Name: nomeVal,
+      // Mantemos ambos por compatibilidade, mas o campo principal para leadsFechados será "Modelo" (em pt)
+      Modelo: modeloVal,
+      vehicleModel: modeloVal,
+      AnoModelo: anoModeloVal,
+      vehicleYearModel: anoModeloVal,
+      Cidade: cidadeVal,
+      city: cidadeVal,
+      Telefone: telefoneVal,
+      phone: telefoneVal,
+      TipoSeguro: tipoSeguroVal,
+      insuranceType: tipoSeguroVal,
       status: typeof data.status === 'string' ? data.status : data.Status ?? '',
-      confirmado: data.confirmado === true || data.confirmado === 'true' || false,
-      insurer: data.insurer ?? '',
-      insurerConfirmed: data.insurerConfirmed === true || data.insurerConfirmed === 'true' || false,
-      usuarioId: data.usuarioId ? Number(data.usuarioId) : (data.usuarioId ?? null),
+      confirmado:
+        data.confirmado === true || data.confirmado === 'true' ? true : false,
+      insurer: data.insurer ?? data.Seguradora ?? '',
+      insurerConfirmed:
+        data.insurerConfirmed === true || data.insurerConfirmed === 'true'
+          ? true
+          : false,
+      usuarioId:
+        data.usuarioId !== undefined && data.usuarioId !== null
+          ? Number(data.usuarioId)
+          : data.usuarioId ?? null,
       premioLiquido: data.premioLiquido ?? data.PremioLiquido ?? '',
       comissao: data.comissao ?? data.Comissao ?? '',
       parcelamento: data.parcelamento ?? data.Parcelamento ?? '',
@@ -93,16 +141,15 @@ const Leads = ({
       agendados: data.agendados ?? false,
       MeioPagamento: data.MeioPagamento ?? '',
       CartaoPortoNovo: data.CartaoPortoNovo ?? '',
-      // mantém outros campos brutos (se necessário)
+      // Mantém demais campos brutos se houver necessidade
       ...data,
     };
   };
 
-  // Função para formatar ISO -> DD/MM/YYYY
+  // Formata ISO -> DD/MM/YYYY
   const formatDDMMYYYYFromISO = (isoOrString) => {
     if (!isoOrString) return '';
     try {
-      // if firebase Timestamp-like
       if (typeof isoOrString === 'object' && typeof isoOrString.toDate === 'function') {
         const d = isoOrString.toDate();
         return d.toLocaleDateString('pt-BR');
@@ -118,73 +165,60 @@ const Leads = ({
     }
   };
 
-  // Função para mover lead para leadsFechados e marcar o original como closed
+  // Move lead para leadsFechados com apenas os campos portugueses solicitados
   const moveLeadToClosed = async (leadId, leadData = {}) => {
     try {
-      // Construir payload contendo apenas os campos preenchidos solicitados
-      // e deixando vazios os campos que serão preenchidos no LeadsFechados.jsx
+      // Extrai valores com várias alternativas (para garantir que pegue o valor correto)
       const nomeVal =
-        leadData.name ??
-        leadData.nome ??
         leadData.Nome ??
+        leadData.nome ??
         leadData.Name ??
+        leadData.name ??
         '';
 
-      const vehicleModelVal =
-        leadData.vehicleModel ??
-        leadData.modelo ??
+      const modeloVal =
         leadData.Modelo ??
+        leadData.modelo ??
+        leadData['Modelo do Veículo'] ??
+        leadData['modelo do veículo'] ??
+        leadData.modeloVeiculo ??
+        leadData.vehicleModel ??
+        leadData.model ??
         '';
 
-      const vehicleYearVal =
-        leadData.vehicleYearModel ??
-        leadData.anoModelo ??
+      const anoModeloVal =
         leadData.AnoModelo ??
+        leadData.anoModelo ??
+        leadData.Ano ??
         leadData.ano ??
+        leadData.vehicleYearModel ??
         '';
 
-      const cityVal =
-        leadData.city ??
-        leadData.Cidade ??
-        leadData.cidade ??
-        '';
+      const cidadeVal =
+        leadData.Cidade ?? leadData.cidade ?? leadData.city ?? '';
 
-      const phoneVal =
-        leadData.phone ??
-        leadData.Telefone ??
-        leadData.telefone ??
-        leadData.phoneNumber ??
-        '';
+      const telefoneVal =
+        leadData.Telefone ?? leadData.telefone ?? leadData.phone ?? '';
 
-      const insuranceTypeVal =
-        leadData.insuranceType ??
-        leadData.tipoSeguro ??
+      const tipoSeguroVal =
         leadData.TipoSeguro ??
+        leadData.tipoSeguro ??
+        leadData.insuranceType ??
         '';
 
+      // Monta payload contendo somente os campos em PT + ID + usuarioId + campos de venda vazios
       const payload = {
-        // IDs / nomes
         ID: leadData.ID ?? leadData.id ?? String(leadId),
         id: String(leadId),
-        // Nome
         Nome: nomeVal,
-        name: nomeVal,
-        Name: nomeVal,
-        // Modelo / Ano
-        Modelo: vehicleModelVal,
-        vehicleModel: vehicleModelVal,
-        AnoModelo: vehicleYearVal,
-        vehicleYearModel: vehicleYearVal,
-        // Cidade / Telefone / TipoSeguro
-        Cidade: cityVal,
-        city: cityVal,
-        Telefone: phoneVal,
-        phone: phoneVal,
-        TipoSeguro: insuranceTypeVal,
-        insuranceType: insuranceTypeVal,
-        // Campos de venda — deixamos vazios intencionalmente
+        Modelo: modeloVal,
+        AnoModelo: anoModeloVal,
+        Cidade: cidadeVal,
+        Telefone: telefoneVal,
+        TipoSeguro: tipoSeguroVal,
+        usuarioId: leadData.usuarioId ?? null,
+        // Campos de venda — intencionalmente vazios para preenchimento posterior
         Seguradora: '',
-        insurer: '',
         MeioPagamento: '',
         CartaoPortoNovo: '',
         PremioLiquido: '',
@@ -192,22 +226,20 @@ const Leads = ({
         Parcelamento: '',
         VigenciaInicial: '',
         VigenciaFinal: '',
-        // Status/Observação/Responsável mínimos
+        // Metadata mínimo
         Status: leadData.status ?? leadData.Status ?? 'Fechado',
         Observacao: leadData.observacao ?? leadData.Observacao ?? '',
         Responsavel: leadData.responsavel ?? leadData.Responsavel ?? '',
-        usuarioId: leadData.usuarioId ?? null,
-        // Data/metadata
         Data: leadData.Data ?? formatDDMMYYYYFromISO(leadData.createdAt) ?? '',
         createdAt: leadData.createdAt ?? null,
         closedAt: serverTimestamp(),
       };
 
-      // Escreve o documento em leadsFechados (substitui conteúdo do doc para garantir os campos)
+      // Salva sem merge (substitui) para garantir que os campos de venda fiquem vazios
       const closedRef = doc(db, 'leadsFechados', String(leadId));
-      await setDoc(closedRef, payload); // sem merge para garantir que vendas fiquem vazias
+      await setDoc(closedRef, payload);
 
-      // Marca o lead original como fechado em vez de deletar
+      // Marca o lead original como fechado
       const originalRef = doc(db, 'leads', String(leadId));
       const updatePayload = {
         closed: true,
@@ -216,14 +248,15 @@ const Leads = ({
       };
       await updateDoc(originalRef, updatePayload);
 
-      console.log(`Lead ${leadId} copiado para leadsFechados (campos base) e marcado como closed no leads.`);
+      console.log(
+        `Lead ${leadId} copiado para leadsFechados com campos especificados e marcado como closed no leads.`
+      );
     } catch (err) {
       console.error('Erro ao mover/marcar lead como fechado:', err);
-      // Não lançar para não interromper o fluxo do usuário
     }
   };
 
-  // Listener em tempo real para leads (onSnapshot sem orderBy para robustez)
+  // Listener em tempo real para leads
   useEffect(() => {
     setIsLoading(true);
     try {
@@ -242,12 +275,13 @@ const Leads = ({
 
           setLeadsData(lista);
 
-          // Atualiza observações e flags imediatamente para refletir mudanças do formulário
+          // Atualiza observações e flags
           const initialObservacoes = {};
           const initialIsEditingObservacao = {};
           lista.forEach((lead) => {
             initialObservacoes[lead.id] = lead.observacao || '';
-            initialIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
+            initialIsEditingObservacao[lead.id] =
+              !lead.observacao || lead.observacao.trim() === '';
           });
           setObservacoes(initialObservacoes);
           setIsEditingObservacao(initialIsEditingObservacao);
@@ -293,7 +327,8 @@ const Leads = ({
       const initialIsEditingObservacao = {};
       lista.forEach((lead) => {
         initialObservacoes[lead.id] = lead.observacao || '';
-        initialIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
+        initialIsEditingObservacao[lead.id] =
+          !lead.observacao || lead.observacao.trim() === '';
       });
       setObservacoes(initialObservacoes);
       setIsEditingObservacao(initialIsEditingObservacao);
@@ -440,7 +475,7 @@ const Leads = ({
     }
 
     if (filtroNome) {
-      return nomeContemFiltro(lead.name || lead.nome, filtroNome);
+      return nomeContemFiltro(lead.Nome || lead.name || lead.nome, filtroNome);
     }
 
     return true;
@@ -682,9 +717,15 @@ const Leads = ({
       }
 
       const currentLead = leadsData.find((l) => l.id === leadId);
-      const hasNoObservacao = !currentLead || !currentLead.observacao || currentLead.observacao.trim() === '';
+      const hasNoObservacao =
+        !currentLead || !currentLead.observacao || currentLead.observacao.trim() === '';
 
-      if ((finalStatus === 'Em Contato' || finalStatus === 'Sem Contato' || (typeof finalStatus === 'string' && finalStatus.startsWith('Agendado'))) && hasNoObservacao) {
+      if (
+        (finalStatus === 'Em Contato' ||
+          finalStatus === 'Sem Contato' ||
+          (typeof finalStatus === 'string' && finalStatus.startsWith('Agendado'))) &&
+        hasNoObservacao
+      ) {
         setIsEditingObservacao((prev) => ({ ...prev, [leadId]: true }));
       } else {
         setIsEditingObservacao((prev) => ({ ...prev, [leadId]: false }));
