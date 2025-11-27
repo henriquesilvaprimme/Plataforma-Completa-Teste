@@ -453,6 +453,10 @@ const LeadsFechados = ({ usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDe
     };
 
 
+    const handleRefresh = () => {
+        fetchLeadsFechadosFromFirebase();
+    };
+
     // --- LÓGICA DE PAGINAÇÃO ---
     const totalPaginas = Math.max(1, Math.ceil(fechadosFiltradosInterno.length / leadsPorPagina));
     const paginaCorrigida = Math.min(paginaAtual, totalPaginas);
