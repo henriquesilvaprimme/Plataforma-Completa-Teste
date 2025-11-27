@@ -7,7 +7,7 @@ import { db } from './firebase';
 // 1. COMPONENTE PRINCIPAL: LeadsFechados
 // ===============================================
 
-const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, fetchLeadsFechadosFromSheet: _fetch_unused, isAdmin, scrollContainerRef }) => {
+const LeadsFechados = ({ leads: _leads_unused, usuarios: usuariosProp, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, fetchLeadsFechadosFromSheet: _fetch_unused, isAdmin, scrollContainerRef }) => {
     // --- ESTADOS ---
     const [fechadosFiltradosInterno, setFechadosFiltradosInterno] = useState([]);
     const [paginaAtual, setPaginaAtual] = useState(1);
@@ -20,6 +20,9 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
 
     // Novo estado: leads vindos do Firestore (normalizados)
     const [leadsFromFirebase, setLeadsFromFirebase] = useState([]);
+
+    // Estado para lista de usuários lida do Firestore (coleção 'usuarios')
+    const [usuariosFromFirebase, setUsuariosFromFirebase] = useState([]);
 
     // >>> NOVO ESTADO: Controle de edição de nome <<<
     const [nomeTemporario, setNomeTemporario] = useState({}); // Mapeia ID para o texto temporário no input
@@ -315,7 +318,7 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         scrollToTop();
     };
 
-    // --- Novo: Listener em tempo real para leadsFechados no Firestore ---
+    // --- Listener em tempo real para leadsFechados no Firestore ---
     useEffect(() => {
         setIsLoading(true);
         try {
@@ -336,6 +339,23 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         }
     }, []);
 
+    // Fetch usuarios collection once (to resolve usuarioId / nome / ID matches)
+    useEffect(() => {
+        let mounted = true;
+        const fetchUsuarios = async () => {
+            try {
+                const snap = await getDocs(query(collection(db, 'usuarios')));
+                if (!mounted) return;
+                const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                setUsuariosFromFirebase(arr);
+            } catch (err) {
+                console.error('Erro ao buscar usuarios do Firestore:', err);
+            }
+        };
+        fetchUsuarios();
+        return () => { mounted = false; };
+    }, []);
+
     // Handler de refresh manual (busca via getDocs)
     const handleRefresh = async () => {
         setIsLoading(true);
@@ -352,7 +372,11 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
 
     // --------------------------
     // VISIBILITY: apenas admin vê todos; usuário vê apenas os fechados atribuidos a ele
-    // (Lógica adaptada para comparar Responsavel com o usuário logado — desta vez usando a lista `usuarios` proveniente do Firestore)
+    // Regras solicitadas:
+    // - Mostrar lead se lead.usuarioId === usuário.id (ou equivalentes)
+    // - Mostrar lead se lead.ID || lead.id corresponde ao usuário
+    // - Mostrar lead se lead.Responsavel corresponde ao nome do usuário
+    // Busca/validação combinando localStorage + usuários carregados da coleção 'usuarios'
     // --------------------------
     const getCurrentUserFromStorage = () => {
         try {
@@ -364,92 +388,105 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         }
     };
 
-    // Novo: tenta resolver o usuário logado consultando a prop `usuarios` (carregada da coleção 'usuarios')
-    const getLoggedUsuarioFromUsuarios = () => {
-        try {
-            const stored = getCurrentUserFromStorage();
-            if (!stored) return null;
+    // Retorna o usuário "resolvido" preferencialmente a partir da lista usuariosFromFirebase (se disponível),
+    // senão a partir de localStorage.
+    const getResolvedLoggedUser = () => {
+        const stored = getCurrentUserFromStorage();
+        if (!stored) return null;
 
-            const storedId = String(stored.id ?? stored.ID ?? stored.userId ?? stored.uid ?? '').trim();
-            const storedLogin = String(stored.usuario ?? stored.user ?? stored.login ?? stored.email ?? '').trim();
-            const storedNome = normalizarTexto(String(stored.nome ?? stored.name ?? '').trim());
+        const storedId = String(stored.id ?? stored.ID ?? stored.userId ?? stored.uid ?? '').trim();
+        const storedLogin = String(stored.usuario ?? stored.user ?? stored.login ?? stored.email ?? '').trim();
+        const storedNome = normalizarTexto(String(stored.nome ?? stored.name ?? '').trim());
 
-            if (!Array.isArray(usuarios)) return null;
-
-            // 1) tentar por id exato
+        // Preferir buscar na lista carregada do Firestore
+        if (Array.isArray(usuariosFromFirebase) && usuariosFromFirebase.length > 0) {
+            // 1) por id exato
             if (storedId) {
-                const foundById = usuarios.find(u => {
+                const found = usuariosFromFirebase.find(u => {
                     const uid = String(u.id ?? u.ID ?? u.userId ?? u.uid ?? '').trim();
                     return uid && uid === storedId;
                 });
-                if (foundById) return foundById;
+                if (found) return found;
             }
 
-            // 2) tentar por login/email/usuario
+            // 2) por login/email/usuario
             if (storedLogin) {
-                const foundByLogin = usuarios.find(u => {
+                const foundLogin = usuariosFromFirebase.find(u => {
                     const uLogin = String(u.usuario ?? u.user ?? u.email ?? '').trim();
                     return uLogin && uLogin === storedLogin;
                 });
-                if (foundByLogin) return foundByLogin;
+                if (foundLogin) return foundLogin;
             }
 
-            // 3) tentar por nome (normalizado)
+            // 3) por nome normalizado
             if (storedNome) {
-                const foundByNome = usuarios.find(u => {
+                const foundNome = usuariosFromFirebase.find(u => {
                     const uNome = normalizarTexto(String(u.nome ?? '').trim());
                     return uNome && uNome === storedNome;
                 });
-                if (foundByNome) return foundByNome;
+                if (foundNome) return foundNome;
             }
-
-            return null;
-        } catch (e) {
-            return null;
         }
+
+        // fallback: retorna o objeto do localStorage (possivelmente com id/nome/login)
+        return stored;
     };
 
     const canViewLead = (lead) => {
         if (isAdmin) return true;
+        const logged = getResolvedLoggedUser();
+        if (!logged) return false;
 
-        const loggedFromUsuarios = getLoggedUsuarioFromUsuarios();
-        const stored = getCurrentUserFromStorage();
+        // normalize logged identifiers
+        const loggedIds = new Set();
+        const addIf = (v) => {
+            if (v === undefined || v === null) return;
+            const s = String(v).trim();
+            if (s) loggedIds.add(s);
+        };
+        addIf(logged.id ?? logged.ID ?? logged.userId ?? logged.uid);
+        addIf(logged.ID ?? logged.id ?? logged.userId ?? logged.uid); // duplicates ok
+        addIf(logged.idFirebase ?? logged.uid);
 
-        // Lead usuarioId (string) normalized
+        const loggedLogin = String(logged.usuario ?? logged.user ?? logged.email ?? '').trim();
+        const loggedNomeNormalized = normalizarTexto(String(logged.nome ?? logged.name ?? logged.usuario ?? '').trim());
+
+        // Lead fields to check
         const leadUsuarioId = lead.usuarioId !== undefined && lead.usuarioId !== null ? String(lead.usuarioId).trim() : '';
+        const leadIDfield = lead.ID !== undefined && lead.ID !== null ? String(lead.ID).trim() : '';
+        const leadIdField = lead.id !== undefined && lead.id !== null ? String(lead.id).trim() : '';
+        const leadResponsavelRaw = lead.Responsavel ?? lead.responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
+        const leadResponsavelNormalized = normalizarTexto(String(leadResponsavelRaw).trim());
+        const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
 
-        // 1) If we have a user from usuarios prop, prefer that match
-        if (loggedFromUsuarios) {
-            const loggedId = String(loggedFromUsuarios.id ?? loggedFromUsuarios.ID ?? loggedFromUsuarios.userId ?? loggedFromUsuarios.uid ?? '').trim();
-            if (loggedId && leadUsuarioId && loggedId === leadUsuarioId) return true;
+        // Check usuarioId match
+        if (leadUsuarioId && loggedIds.has(leadUsuarioId)) return true;
 
-            // Compare normalized names: lead.Responsavel vs loggedFromUsuarios.nome
-            const leadResponsavelRaw = lead.responsavel ?? lead.Responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
-            const leadResponsavel = normalizarTexto(String(leadResponsavelRaw).trim());
-            const loggedNome = normalizarTexto(String(loggedFromUsuarios.nome ?? loggedFromUsuarios.name ?? '').trim());
-            if (leadResponsavel && loggedNome && leadResponsavel === loggedNome) return true;
+        // Check ID or id matches any logged id
+        if ((leadIDfield && loggedIds.has(leadIDfield)) || (leadIdField && loggedIds.has(leadIdField))) return true;
 
-            // Compare login fields
-            const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
-            const loggedLogin = String(loggedFromUsuarios.usuario ?? loggedFromUsuarios.user ?? loggedFromUsuarios.email ?? '').trim();
-            if (leadUsuarioLogin && loggedLogin && leadUsuarioLogin === loggedLogin) return true;
+        // Check Responsavel name match
+        if (leadResponsavelNormalized && loggedNomeNormalized && leadResponsavelNormalized === loggedNomeNormalized) return true;
 
-            return false;
-        }
+        // Check login/usuario match
+        if (leadUsuarioLogin && loggedLogin && leadUsuarioLogin === loggedLogin) return true;
 
-        // 2) Fallback para checagem usando apenas localStorage (caso usuarios prop não contenha o logado)
-        if (stored) {
-            const userId = String(stored.id ?? stored.ID ?? stored.userId ?? stored.uid ?? '').trim();
-            if (userId && leadUsuarioId && userId === leadUsuarioId) return true;
-
-            const leadResponsavelRaw = lead.responsavel ?? lead.Responsavel ?? lead.raw?.Responsavel ?? lead.raw?.responsavel ?? '';
-            const leadResponsavel = normalizarTexto(String(leadResponsavelRaw).trim());
-            const storedNome = normalizarTexto(String(stored.nome ?? stored.name ?? stored.usuario ?? '').trim());
-            if (leadResponsavel && storedNome && leadResponsavel === storedNome) return true;
-
-            const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? '').trim();
-            const storedLogin = String(stored.usuario ?? stored.user ?? '').trim();
-            if (leadUsuarioLogin && storedLogin && leadUsuarioLogin === storedLogin) return true;
+        // Additional check: if usuariosProp was passed and contains the logged user, match by that record's id/nome
+        try {
+            if (Array.isArray(usuariosProp) && usuariosProp.length > 0) {
+                const found = usuariosProp.find(u => {
+                    const uid = String(u.id ?? u.ID ?? u.userId ?? '').trim();
+                    const ulogin = String(u.usuario ?? u.user ?? u.email ?? '').trim();
+                    const unome = normalizarTexto(String(u.nome ?? '').trim());
+                    if (uid && loggedIds.has(uid)) return true;
+                    if (ulogin && loggedLogin && ulogin === loggedLogin) return true;
+                    if (unome && loggedNomeNormalized && unome === loggedNomeNormalized) return true;
+                    return false;
+                });
+                if (found) return true;
+            }
+        } catch (e) {
+            // ignore
         }
 
         return false;
@@ -685,7 +722,7 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
         }
 
         setFechadosFiltradosInterno(leadsFiltrados);
-    }, [leadsFromFirebase, filtroNome, filtroData, isAdmin, usuarios]); // incluí usuarios para recalcular caso lista mude
+    }, [leadsFromFirebase, filtroNome, filtroData, isAdmin, usuariosFromFirebase, usuariosProp]); // incluí usuariosFromFirebase e usuariosProp para recalcular caso lista mude
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
 
@@ -985,7 +1022,12 @@ const LeadsFechados = ({ leads: _leads_unused, usuarios, onUpdateInsurer, onConf
                         // docId: id do documento Firestore (usado para chamadas ao backend/parent)
                         const docId = lead.id ?? (lead.ID ? String(lead.ID) : '');
 
-                        const responsavel = usuarios.find((u) => u.nome === lead.Responsavel || u.nome === lead.responsavel);
+                        const responsavel = (usuariosFromFirebase.length ? usuariosFromFirebase : (usuariosProp || [])).find((u) => {
+                            const nomeNorm = normalizarTexto(String(u.nome ?? '').trim());
+                            const leadRespNorm = normalizarTexto(String(lead.Responsavel ?? lead.responsavel ?? '').trim());
+                            return nomeNorm && leadRespNorm && nomeNorm === leadRespNorm;
+                        });
+
                         const isSeguradoraPreenchida = !!(lead.raw?.Seguradora || lead.raw?.insurer || lead.raw?.Seguradora);
 
                         // Variáveis de estado para a lógica condicional
