@@ -107,19 +107,24 @@ function App() {
   const normalizeLead = (item = {}) => {
     // tenta extrair id seguro
     const rawId = item.id ?? item.ID ?? item.Id ?? item.IdLead ?? null;
-    const id = rawId !== null && rawId !== undefined ? rawId : (item.phone ? String(item.phone) : crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
+    const derivedId = rawId !== null && rawId !== undefined && rawId !== ''
+      ? String(rawId)
+      : (item.phone ? String(item.phone) : (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)));
+
     const statusRaw = item.status ?? item.Status ?? item.stato ?? '';
     const status = (typeof statusRaw === 'string' && statusRaw.trim() !== '') ? statusRaw : (item.confirmado ? 'Em Contato' : 'Selecione o status');
+
+    // garante que tanto id quanto ID existam e sejam strings (consistência)
     return {
-      id,
-      ID: item.ID ?? item.id ?? id,
+      id: String(item.id ?? item.ID ?? derivedId),
+      ID: String(item.ID ?? item.id ?? derivedId),
       name: item.name ?? item.Name ?? item.nome ?? '',
       nome: item.nome ?? item.name ?? item.Name ?? '',
-      vehicleModel: item.vehicleModel ?? item.vehiclemodel ?? item.vehicle_model ?? '',
-      vehicleYearModel: item.vehicleYearModel ?? item.vehicleyearmodel ?? item.vehicle_year_model ?? '',
+      vehicleModel: item.vehicleModel ?? item.vehiclemodel ?? item.vehicle_model ?? item.Modelo ?? item.modelo ?? '',
+      vehicleYearModel: item.vehicleYearModel ?? item.vehicleyearmodel ?? item.vehicle_year_model ?? item.AnoModelo ?? item.anoModelo ?? '',
       city: item.city ?? item.Cidade ?? item.cityName ?? '',
       phone: item.phone ?? item.Telefone ?? item.Phone ?? '',
-      insuranceType: item.insuranceType ?? item.insurancetype ?? item.insurer ?? '',
+      insuranceType: item.insuranceType ?? item.insurancetype ?? item.insurer ?? item.TipoSeguro ?? '',
       status: status,
       confirmado: item.confirmado === 'true' || item.confirmado === true || false,
       insurer: item.insurer ?? item.Insurer ?? '',
@@ -398,6 +403,7 @@ function App() {
         return;
       }
 
+      // normaliza e garante id/ID como strings
       const formattedData = data.map(item => normalizeLead(item));
       setLeadsFechados(formattedData);
 
@@ -424,7 +430,7 @@ function App() {
   const handleLeadFechadoNameUpdate = (leadId, novoNome) => {
     setLeadsFechados(prevLeads => {
       const updatedLeads = prevLeads.map(lead => {
-        if (String(lead.ID) === String(leadId)) {
+        if (String(lead.ID) === String(leadId) || String(lead.id) === String(leadId)) {
           return {
             ...lead,
             name: novoNome,
@@ -497,8 +503,11 @@ function App() {
           const leadParaAdicionar = leads.find((lead) => lead.phone === phone);
 
           if (leadParaAdicionar) {
+            const newId = String(leadParaAdicionar.id ?? leadParaAdicionar.ID ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)));
+
             const novoLeadFechado = {
-              ID: leadParaAdicionar.id || crypto?.randomUUID?.() || Math.random().toString(36).slice(2),
+              ID: newId,
+              id: newId,
               name: leadParaAdicionar.name,
               vehicleModel: leadParaAdicionar.vehicleModel,
               vehicleYearModel: leadParaAdicionar.vehicleYearModel,
@@ -516,7 +525,6 @@ function App() {
               VigenciaFinal: leadParaAdicionar.VigenciaFinal || "",
               MeioPagamento: leadParaAdicionar.MeioPagamento || '',
               CartaoPortoNovo: leadParaAdicionar.CartaoPortoNovo || '',
-              id: leadParaAdicionar.id || null,
               usuario: leadParaAdicionar.usuario || "",
               nome: leadParaAdicionar.nome || "",
               email: leadParaAdicionar.email || "",
@@ -570,46 +578,57 @@ function App() {
 
   // FUNÇÃO ATUALIZADA COM NOVOS PARÂMETROS
   const confirmarSeguradoraLead = (id, premio, seguradora, comissao, parcelamento, vigenciaFinal, vigenciaInicial, meioPagamento, cartaoPortoNovo) => {
-    const lead = leadsFechados.find((lead) => lead.ID == id);
+    // Procura pelo lead usando ID, id ou phone (tolerante)
+    const found = leadsFechados.find(l =>
+      String(l.ID) === String(id) || String(l.id) === String(id) || String(l.phone) === String(id)
+    );
 
-    if (!lead) {
-      console.error(`Lead com ID ${id} não encontrado na lista de leads fechados.`);
-      return;
+    if (!found) {
+      console.warn(`Aviso: Lead com identificador ${id} não encontrado por ID/id/phone. Tentando atualizar por igualdade flexível.`);
     }
 
-    lead.Seguradora = seguradora;
-    lead.PremioLiquido = premio;
-    lead.Comissao = comissao;
-    lead.Parcelamento = parcelamento;
-    lead.VigenciaFinal = vigenciaFinal || '';
-    lead.VigenciaInicial = vigenciaInicial || '';
-    lead.MeioPagamento = meioPagamento || '';
-    lead.CartaoPortoNovo = cartaoPortoNovo || '';
-
+    // Atualiza estado localmente sempre que possível (mapeia por várias chaves)
     setLeadsFechados((prev) => {
-      const atualizados = prev.map((l) =>
-        l.ID === id ? {
-          ...l,
-          insurerConfirmed: true,
-          Seguradora: seguradora,
-          PremioLiquido: premio,
-          Comissao: comissao,
-          Parcelamento: parcelamento,
-          VigenciaFinal: vigenciaFinal || '',
-          VigenciaInicial: vigenciaInicial || '',
-          MeioPagamento: meioPagamento || '',
-          CartaoPortoNovo: cartaoPortoNovo || ''
-        } : l
-      );
+      const atualizados = prev.map((l) => {
+        if (String(l.ID) === String(id) || String(l.id) === String(id) || String(l.phone) === String(id)) {
+          return {
+            ...l,
+            insurerConfirmed: true,
+            Seguradora: seguradora,
+            PremioLiquido: premio,
+            Comissao: comissao,
+            Parcelamento: parcelamento,
+            VigenciaFinal: vigenciaFinal || '',
+            VigenciaInicial: vigenciaInicial || '',
+            MeioPagamento: meioPagamento || '',
+            CartaoPortoNovo: cartaoPortoNovo || ''
+          };
+        }
+        return l;
+      });
+
       return atualizados;
     });
 
+    // Enfileira alteração localmente (mesmo que o lead não tenha sido localizado, para sincronizar com planilha/serviço)
     try {
-      const changeId = lead.ID ?? lead.id ?? crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+      const changeId = id ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
+      const dataToSave = {
+        id: changeId,
+        ID: changeId,
+        Seguradora: seguradora,
+        PremioLiquido: premio,
+        Comissao: comissao,
+        Parcelamento: parcelamento,
+        VigenciaFinal: vigenciaFinal || '',
+        VigenciaInicial: vigenciaInicial || '',
+        MeioPagamento: meioPagamento || '',
+        CartaoPortoNovo: cartaoPortoNovo || ''
+      };
       saveLocalChange({
         id: changeId,
         type: 'alterar_seguradora',
-        data: lead
+        data: dataToSave
       });
     } catch (error) {
       console.error('Erro ao enfileirar alteração de seguradora localmente:', error);
@@ -619,7 +638,7 @@ function App() {
   const atualizarDetalhesLeadFechado = (id, campo, valor) => {
     setLeadsFechados((prev) =>
       prev.map((lead) =>
-        lead.ID === id ? { ...lead, [campo]: valor } : lead
+        (String(lead.ID) === String(id) || String(lead.id) === String(id)) ? { ...lead, [campo]: valor } : lead
       )
     );
   };
