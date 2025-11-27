@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { RefreshCcw, Search, CheckCircle, DollarSign, Calendar, Edit, X } from 'lucide-react';
+import { RefreshCcw, Search, CheckCircle, DollarSign, Calendar } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -19,7 +19,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
     const [nomeInput, setNomeInput] = useState('');
 
     // >>> NOVO ESTADO: Controle de edição de nome <<<
-    // O estado nomeEditando foi removido para que a edição fique sempre aberta.
     const [nomeTemporario, setNomeTemporario] = useState({}); // Mapeia ID para o texto temporário no input
 
     // Novo estado: leads vindos do Firestore
@@ -39,15 +38,26 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
     // --- FUNÇÕES DE LÓGICA ---
 
     /**
-     * GARANTIA DE FORMATO: Converte DD/MM/AAAA para AAAA-MM-DD sem depender de new Date().
+     * Converte vários formatos de data para AAAA-MM-DD.
+     * Suporta:
+     * - Firebase Timestamp (objeto com toDate)
+     * - DD/MM/AAAA
+     * - AAAA-MM-DD
      */
     const getDataParaComparacao = (dataStr) => {
-        if (!dataStr) return '';
+        if (!dataStr && dataStr !== 0) return '';
+        // Firebase Timestamp (p.ex. { toDate: f() })
+        if (typeof dataStr === 'object' && dataStr !== null && typeof dataStr.toDate === 'function') {
+            const d = dataStr.toDate();
+            if (!isNaN(d.getTime())) {
+                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            }
+        }
+
         dataStr = String(dataStr).trim();
 
-        const parts = dataStr.split('/');
-
         // Trata o formato DD/MM/AAAA
+        const parts = dataStr.split('/');
         if (parts.length === 3) {
             const [dia, mes, ano] = parts;
             if (!isNaN(parseInt(dia)) && !isNaN(parseInt(mes)) && !isNaN(parseInt(ano))) {
@@ -55,9 +65,15 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             }
         }
 
-        // Se já estiver em AAAA-MM-DD, retorna como está
+        // Trata se já for AAAA-MM-DD
         if (/^\d{4}-\d{2}-\d{2}$/.test(dataStr)) {
             return dataStr;
+        }
+
+        // Tenta parsear ISO
+        const maybeDate = new Date(dataStr);
+        if (!isNaN(maybeDate.getTime())) {
+            return `${maybeDate.getFullYear()}-${String(maybeDate.getMonth() + 1).padStart(2, '0')}-${String(maybeDate.getDate()).padStart(2, '0')}`;
         }
 
         return ''; // Retorna vazio se não conseguir formatar
@@ -100,21 +116,71 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
     };
 
     const aplicarFiltroData = () => {
-        setFiltroData(dataInput); // dataInput está no formato AAAA-MM
+        setFiltroData(dataInput); // dataInput está no formato AAAA-MM (padrão do input type=month)
         setFiltroNome('');
         setNomeInput('');
         setPaginaAtual(1);
         scrollToTop();
     };
 
+    // --- PARSE do filtro de data livre (aceita 'AAAA-MM' ou 'Novembro de 2025') ---
+    const mesesPt = {
+        janeiro: '01', janeiro_: '01',
+        fevereiro: '02', fevereiro_: '02',
+        marco: '03', março: '03', marco_: '03',
+        abril: '04', abril_: '04',
+        maio: '05', maio_: '05',
+        junho: '06', junho_: '06',
+        julho: '07', julho_: '07',
+        agosto: '08', agosto_: '08',
+        setembro: '09', setembro_: '09',
+        outubro: '10', outubro_: '10',
+        novembro: '11', novembro_: '11',
+        dezembro: '12', dezembro_: '12'
+    };
+
+    const filtroDataToYYYYMM = (filtro) => {
+        if (!filtro) return '';
+        const s = String(filtro).trim();
+        // Se já for AAAA-MM
+        if (/^\d{4}-\d{2}$/.test(s)) return s;
+        // Tentar extrair "Novembro de 2025" ou "novembro 2025"
+        const m = s.match(/(janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s*(de)?\s*(\d{4})/i);
+        if (m) {
+            const mesNome = m[1].toLowerCase();
+            const ano = m[3];
+            const mesNum = mesesPt[mesNome] || mesesPt[mesNome.replace('ç', 'c')] || '';
+            if (mesNum) return `${ano}-${mesNum}`;
+        }
+        // Tentar extrair "11/2025" ou "11-2025"
+        const m2 = s.match(/(\d{1,2})[\/\-](\d{4})/);
+        if (m2) {
+            const mes = String(m2[1]).padStart(2, '0');
+            const ano = m2[2];
+            if (parseInt(mes, 10) >= 1 && parseInt(mes, 10) <= 12) return `${ano}-${mes}`;
+        }
+        return '';
+    };
+
     // --- FIRESTORE: listener e fetch para leadsFechados ---
     useEffect(() => {
         setIsLoading(true);
-        // Listener em tempo real
         try {
             const q = query(collection(db, 'leadsFechados'), orderBy('closedAt', 'desc'));
             const unsub = onSnapshot(q, (snapshot) => {
-                const list = snapshot.docs.map(d => ({ ID: d.id, ...d.data() }));
+                const list = snapshot.docs.map(d => {
+                    const data = d.data() || {};
+                    // Garantir os campos requisitados explicitamente
+                    return {
+                        ID: d.id,
+                        Responsavel: data.Responsavel ?? data.responsavel ?? data.ResponsavelName ?? '',
+                        PremioLiquido: data.PremioLiquido ?? data.premioLiquido ?? data.Premio ?? '',
+                        VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? data.VigenciaInicio ?? '',
+                        VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? data.VigenciaFim ?? '',
+                        // espalhar o restante para compatibilidade com o restante do componente
+                        ...data
+                    };
+                });
                 setLeadsFromFirebase(list);
                 setIsLoading(false);
             }, (err) => {
@@ -136,7 +202,17 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         setIsLoading(true);
         try {
             const snap = await getDocs(query(collection(db, 'leadsFechados'), orderBy('closedAt', 'desc')));
-            const lista = snap.docs.map(d => ({ ID: d.id, ...d.data() }));
+            const lista = snap.docs.map(d => {
+                const data = d.data() || {};
+                return {
+                    ID: d.id,
+                    Responsavel: data.Responsavel ?? data.responsavel ?? data.ResponsavelName ?? '',
+                    PremioLiquido: data.PremioLiquido ?? data.premioLiquido ?? data.Premio ?? '',
+                    VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? data.VigenciaInicio ?? '',
+                    VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? data.VigenciaFim ?? '',
+                    ...data
+                };
+            });
             setLeadsFromFirebase(lista);
         } catch (error) {
             console.error('Erro ao atualizar leads fechados (fetch):', error);
@@ -155,23 +231,33 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
     useEffect(() => {
         // Preferir leads vindos do Firebase; se vazio, usar prop `leads` como fallback
         const sourceLeads = (Array.isArray(leadsFromFirebase) && leadsFromFirebase.length > 0) ? leadsFromFirebase : (Array.isArray(leads) ? leads : []);
-        const fechadosAtuais = sourceLeads.filter(lead => String(lead.Status || lead.status || '').toLowerCase() === 'fechado' || !!lead.closedAt);
+        // Considera como "fechado" leads que tenham Status 'Fechado' (case-insensitive) ou closedAt presente
+        const fechadosAtuais = sourceLeads.filter(lead => {
+            const status = String(lead.Status ?? lead.status ?? '').toLowerCase();
+            if (status === 'fechado') return true;
+            if (lead.closedAt) return true;
+            // If VigenciaFinal exists and VigenciaInicial exists, consider as fechado as well (defensive)
+            if (lead.VigenciaInicial || lead.VigenciaFinal) {
+                // Not necessarily means closed, but keep for compatibility with previous logic:
+                // previous logic filtered by leads where Status === 'Fechado', but we want closed leads collection anyway
+                return true;
+            }
+            return false;
+        });
 
         // Sincronização de estados
         setValores(prevValores => {
             const novosValores = { ...prevValores };
             fechadosAtuais.forEach(lead => {
-                const key = String(lead.ID ?? lead.id ?? lead.idLead ?? lead.documentId ?? lead.phone ?? '');
-                const rawPremioFromApi = String(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? lead.PREMIO ?? '');
+                const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
+                const rawPremioFromApi = String(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? '');
                 const premioFromApi = parseFloat(rawPremioFromApi.replace(/\./g, '').replace(',', '.'));
                 const premioInCents = isNaN(premioFromApi) || rawPremioFromApi === '' ? null : Math.round(premioFromApi * 100);
 
                 const apiComissao = lead.Comissao ?? lead.comissao ?? '';
                 const apiParcelamento = lead.Parcelamento ?? lead.parcelamento ?? '';
                 const apiInsurer = lead.Seguradora ?? lead.insurer ?? '';
-                // >>> NOVO: Meio de Pagamento <<<
                 const apiMeioPagamento = lead.MeioPagamento ?? lead.meioPagamento ?? '';
-                // >>> NOVO: Cartao Porto Seguro Novo? <<<
                 const apiCartaoPortoNovo = lead.CartaoPortoNovo ?? lead.cartaoPortoNovo ?? '';
 
                 if (!novosValores[key]) novosValores[key] = {};
@@ -215,7 +301,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             return novosValores;
         });
 
-        // >>> NOVO: Sincronização do estado de Nome Temporário <<<
+        // >>> Sincronização do estado de Nome Temporário <<<
         setNomeTemporario(prevNomes => {
             const novosNomes = { ...prevNomes };
             fechadosAtuais.forEach(lead => {
@@ -226,7 +312,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             });
             return novosNomes;
         });
-        // <<< FIM NOVO ESTADO NOME TEMPORÁRIO >>>
 
         setPremioLiquidoInputDisplay(prevDisplay => {
             const newDisplay = { ...prevDisplay };
@@ -234,7 +319,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                 const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
                 const currentPremio = String(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? '');
                 if (currentPremio !== '') {
-                    const premioFloat = parseFloat(currentPremio.replace(',', '.').replace(/\./g, '').replace(/\s/g, ''));
+                    const premioFloat = parseFloat(currentPremio.toString().replace(',', '.').replace(/\s/g, '').replace(/\./g, ''));
                     newDisplay[key] = isNaN(premioFloat) ? '' : premioFloat.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 } else if (prevDisplay[key] === undefined) {
                     newDisplay[key] = '';
@@ -247,17 +332,20 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             const novasVigencias = { ...prevVigencia };
             fechadosAtuais.forEach(lead => {
                 const key = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
-                const vigenciaInicioStrApi = String(lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? '');
-                const vigenciaFinalStrApi = String(lead.VigenciaFinal ?? lead.vigenciaFinal ?? lead.VigenciaFim ?? '');
+                const vigenciaInicioStrApi = lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? lead.vigenciaInicio ?? '';
+                const vigenciaFinalStrApi = lead.VigenciaFinal ?? lead.vigenciaFinal ?? lead.VigenciaFim ?? lead.vigenciaFim ?? '';
 
                 if (!novasVigencias[key]) novasVigencias[key] = { inicio: '', final: '' };
 
                 if (vigenciaInicioStrApi && (!novasVigencias[key].inicio || novasVigencias[key].inicio === '')) {
-                    novasVigencias[key].inicio = vigenciaInicioStrApi;
+                    // normalizar para AAAA-MM-DD quando possivel
+                    const normalizedInicio = getDataParaComparacao(vigenciaInicioStrApi);
+                    novasVigencias[key].inicio = normalizedInicio || String(vigenciaInicioStrApi);
                 }
 
                 if (vigenciaFinalStrApi && (!novasVigencias[key].final || novasVigencias[key].final === '')) {
-                    novasVigencias[key].final = vigenciaFinalStrApi;
+                    const normalizedFinal = getDataParaComparacao(vigenciaFinalStrApi);
+                    novasVigencias[key].final = normalizedFinal || String(vigenciaFinalStrApi);
                 } else if (!novasVigencias[key].final && novasVigencias[key].inicio) {
                     // tenta inferir final = +1 ano
                     try {
@@ -275,16 +363,20 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             return novasVigencias;
         });
 
-        // ORDENAÇÃO
+        // ORDENAÇÃO: prioriza VigenciaInicial (se existir) ou closedAt/data
         const fechadosOrdenados = [...fechadosAtuais].sort((a, b) => {
-            // prefer closedAt, depois Data
-            const toTime = (lead) => {
-                if (lead.closedAt && typeof lead.closedAt.toDate === 'function') return lead.closedAt.toDate().getTime();
+            const timeFrom = (lead) => {
+                const vi = getDataParaComparacao(lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? '');
+                if (vi) {
+                    const d = new Date(vi + 'T00:00:00');
+                    if (!isNaN(d.getTime())) return d.getTime();
+                }
+                if (lead.closedAt && typeof lead.closedAt.toDate === 'function') return -lead.closedAt.toDate().getTime(); // fallback
                 if (lead.closedAt) {
                     const d = new Date(lead.closedAt);
                     if (!isNaN(d.getTime())) return d.getTime();
                 }
-                const dataStr = lead.Data ?? lead.data ?? lead.createdAt ?? '';
+                const dataStr = lead.Data ?? lead.data ?? '';
                 const iso = getDataParaComparacao(String(dataStr));
                 if (iso) {
                     const d = new Date(iso + 'T00:00:00');
@@ -292,27 +384,31 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                 }
                 return 0;
             };
-            return toTime(b) - toTime(a);
+            return timeFrom(b) - timeFrom(a);
         });
 
         // Aplicação da lógica de filtragem
         let leadsFiltrados;
         if (filtroNome) {
             leadsFiltrados = fechadosOrdenados.filter(lead =>
-                nomeContemFiltro(lead.name || lead.Nome || lead.nome || '', filtroNome)
+                nomeContemFiltro(lead.name || lead.Nome || lead.nome || lead.Responsavel || '', filtroNome)
             );
         } else if (filtroData) {
+            // Converter filtroData para AAAA-MM
+            const targetYYYYMM = filtroDataToYYYYMM(filtroData);
             leadsFiltrados = fechadosOrdenados.filter(lead => {
-                const dataLeadFormatada = getDataParaComparacao(lead.Data ?? lead.data ?? '');
+                // Usar VigenciaInicial para comparação (prioritário)
+                const vigenciaInicioRaw = lead.VigenciaInicial ?? lead.vigenciaInicial ?? lead.VigenciaInicio ?? lead.vigencia_inicio ?? lead.Vigencia ?? '';
+                const dataLeadFormatada = getDataParaComparacao(vigenciaInicioRaw);
                 const dataLeadMesAno = dataLeadFormatada ? dataLeadFormatada.substring(0, 7) : '';
-                return dataLeadMesAno === filtroData;
+                return dataLeadMesAno === targetYYYYMM;
             });
         } else {
             leadsFiltrados = fechadosOrdenados;
         }
 
         setFechadosFiltradosInterno(leadsFiltrados);
-    }, [leadsFromFirebase, leads, filtroNome, filtroData]); // inclui leads prop como fallback
+    }, [leadsFromFirebase, leads, filtroNome, filtroData]);
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
 
@@ -321,24 +417,19 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         return (valorCentavos / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    // >>> NOVO HANDLER: Lógica para editar o nome do lead <<<
+    // >>> Handler para editar o nome do lead <<<
     const handleNomeBlur = (id, novoNome) => {
         const nomeAtualizado = novoNome.trim();
-        // setNomeEditando(null); // REMOVIDO: O campo não precisa sair do modo de edição
-
-        // Verifica se o nome realmente mudou para evitar chamadas desnecessárias à API
-        const lead = (leadsFromFirebase.length ? leadsFromFirebase : leads).find(l => String(l.ID) === String(id) || String(l.id) === String(id));
+        const origem = (leadsFromFirebase.length ? leadsFromFirebase : leads);
+        const lead = origem.find(l => String(l.ID) === String(id) || String(l.id) === String(id));
         if (lead && (lead.name !== nomeAtualizado && lead.Nome !== nomeAtualizado && lead.nome !== nomeAtualizado)) {
             if (nomeAtualizado) {
-                // 1. Atualiza o estado local temporário (que é exibido no card)
                 setNomeTemporario(prev => ({
                     ...prev,
                     [`${id}`]: nomeAtualizado,
                 }));
-                // 2. Chama a função de atualização da prop, enviando 'name' para a API/external handler
                 onUpdateDetalhes(id, 'name', nomeAtualizado);
             } else {
-                // Se o campo ficou vazio, reverte para o nome original (ou deixa a lógica de validação na API)
                 setNomeTemporario(prev => ({
                     ...prev,
                     [`${id}`]: lead.name || lead.Nome || lead.nome || '',
@@ -346,7 +437,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             }
         }
     };
-    // <<< FIM NOVO HANDLER >>>
 
     const handlePremioLiquidoChange = (id, valor) => {
         let cleanedValue = valor.replace(/[^\d,\.]/g, '');
@@ -411,13 +501,11 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         }));
     };
 
-    // Converte para float (com ponto decimal) antes de enviar a atualização
     const handleComissaoBlur = (id) => {
         const comissaoInput = valores[`${id}`]?.Comissao || '';
         const comissaoFloat = parseFloat(comissaoInput.replace(',', '.'));
         onUpdateDetalhes(id, 'Comissao', isNaN(comissaoFloat) ? '' : comissaoFloat);
     };
-
 
     const handleParcelamentoChange = (id, valor) => {
         setValores(prev => ({
@@ -430,9 +518,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         onUpdateDetalhes(id, 'Parcelamento', valor);
     };
     
-    // ************************************************************
-    // NOVO HANDLER: Meio de Pagamento
-    // ************************************************************
+    // Meio de Pagamento
     const handleMeioPagamentoChange = (id, valor) => {
         setValores(prev => {
             const newState = {
@@ -443,11 +529,9 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                 },
             };
             
-            // Lógica de limpeza: Se o novo Meio de Pagamento não for 'CP',
-            // limpe o campo 'CartaoPortoNovo' se ele estiver preenchido.
             if (valor !== 'CP' && newState[`${id}`]?.CartaoPortoNovo) {
                 newState[`${id}`].CartaoPortoNovo = '';
-                onUpdateDetalhes(id, 'CartaoPortoNovo', ''); // Limpa na API também
+                onUpdateDetalhes(id, 'CartaoPortoNovo', '');
             }
             
             return newState;
@@ -456,9 +540,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         onUpdateDetalhes(id, 'MeioPagamento', valor);
     };
 
-    // ************************************************************
-    // NOVO HANDLER: Cartão Porto Seguro Novo?
-    // ************************************************************
     const handleCartaoPortoChange = (id, valor) => {
         setValores(prev => ({
             ...prev,
@@ -470,9 +551,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
         onUpdateDetalhes(id, 'CartaoPortoNovo', valor);
     };
 
-    // ************************************************************
-    // Handler para Seguradora (Atualizado para se integrar aos novos campos)
-    // ************************************************************
     const handleInsurerChange = (id, valor) => {
         const portoSeguradoras = ['Porto Seguro', 'Azul Seguros', 'Itau Seguros'];
         
@@ -485,11 +563,9 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                 },
             };
             
-            // Lógica de limpeza: Se a nova seguradora não for Porto/Azul/Itaú,
-            // limpe o campo 'CartaoPortoNovo' se ele estiver preenchido.
             if (!portoSeguradoras.includes(valor) && newState[`${id}`]?.CartaoPortoNovo) {
                 newState[`${id}`].CartaoPortoNovo = '';
-                onUpdateDetalhes(id, 'CartaoPortoNovo', ''); // Limpa na API também
+                onUpdateDetalhes(id, 'CartaoPortoNovo', '');
             }
 
             return newState;
@@ -519,11 +595,9 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
             },
         }));
 
-        // Atualiza a planilha/API com as datas (estas podem ser atualizadas imediatamente, se desejar)
         onUpdateDetalhes(id, 'VigenciaInicial', dataString);
         onUpdateDetalhes(id, 'VigenciaFinal', dataFinal);
     };
-
 
     // --- LÓGICA DE PAGINAÇÃO ---
     const totalPaginas = Math.max(1, Math.ceil(fechadosFiltradosInterno.length / leadsPorPagina));
@@ -603,7 +677,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                             value={dataInput}
                             onChange={(e) => setDataInput(e.target.value)}
                             className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm"
-                            title="Filtrar por Mês/Ano de Criação"
+                            title="Filtrar por Mês/Ano de Vigência Inicial"
                         />
                         <button
                             onClick={aplicarFiltroData}
@@ -623,22 +697,18 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                     </div>
                 ) : (
                     leadsPagina.map((lead) => {
-                        const responsavel = usuarios.find((u) => u.nome === (lead.Responsavel ?? lead.responsavel));
+                        const responsavelName = lead.Responsavel ?? lead.responsavel ?? lead.ResponsavelName ?? '';
+                        const responsavel = usuarios.find((u) => u.nome === responsavelName);
                         const isSeguradoraPreenchida = !!(lead.Seguradora ?? lead.insurer ?? lead.raw?.Seguradora);
 
-                        // Determine key used in estados
                         const leadKey = String(lead.ID ?? lead.id ?? lead.documentId ?? lead.phone ?? '');
 
-                        // Variáveis de estado para a lógica condicional
                         const currentInsurer = valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? '');
                         const currentMeioPagamento = valores[`${leadKey}`]?.MeioPagamento || (lead.MeioPagamento ?? lead.meioPagamento ?? '');
                         const isPortoInsurer = ['Porto Seguro', 'Azul Seguros', 'Itau Seguros'].includes(currentInsurer);
                         const isCPPayment = currentMeioPagamento === 'CP';
-
-                        // Lógica de exibição do Cartão Porto Novo:
                         const showCartaoPortoNovo = isPortoInsurer && isCPPayment;
 
-                        // Lógica de desativação do botão de confirmação
                         const isButtonDisabled =
                             ! (valores[`${leadKey}`]?.insurer || (lead.Seguradora ?? lead.insurer ?? '')) ||
                             valores[`${leadKey}`]?.PremioLiquido === null ||
@@ -650,13 +720,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                             !vigencia[`${leadKey}`]?.inicio ||
                             !vigencia[`${leadKey}`]?.final;
 
-                        // Show formatted values (fall back to local state or raw)
-                        const displayPremio = premioLiquidoInputDisplay[`${leadKey}`] ?? (
-                            (valores[`${leadKey}`]?.PremioLiquido !== undefined && valores[`${leadKey}`]?.PremioLiquido !== null)
-                                ? formatarMoeda(valores[`${leadKey}`].PremioLiquido)
-                                : ((lead.PremioLiquido ?? lead.premioLiquido ?? '') ? (String(lead.PremioLiquido ?? lead.premioLiquido ?? '').replace(/\./g,'').replace(',', '.')) : '')
-                        );
-
                         return (
                             <div
                                 key={leadKey}
@@ -665,13 +728,11 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                 {/* COLUNA 1: Informações do Lead */}
                                 <div className="col-span-1 border-b pb-4 lg:border-r lg:pb-0 lg:pr-6">
                                     
-                                    {/* >>> NOVO: Lógica de Edição de Nome do Lead (SEMPRE ABERTO OU BLOQUEADO) <<< */}
+                                    {/* Edição de Nome */}
                                     <div className="flex items-center gap-2 mb-2">
                                         {isSeguradoraPreenchida ? (
-                                            // BLOQUEADO: Se a seguradora estiver preenchida
                                             <h3 className="text-xl font-bold text-gray-900">{nomeTemporario[leadKey] || lead.name || lead.Nome || lead.nome}</h3>
                                         ) : (
-                                            // SEMPRE ABERTO: Se a seguradora NÃO estiver preenchida
                                             <div className="flex flex-col w-full">
                                                 <input
                                                     type="text"
@@ -689,10 +750,9 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                             </div>
                                         )}
                                     </div>
-                                    {/* <<< FIM NOVO: Lógica de Edição de Nome do Lead >>> */}
-
 
                                     <div className="space-y-1 text-sm text-gray-700">
+                                        <p><strong>Responsável:</strong> {responsavelName}</p>
                                         <p><strong>Modelo:</strong> {lead.vehicleModel ?? lead.Modelo}</p>
                                         <p><strong>Ano/Modelo:</strong> {lead.vehicleYearModel ?? lead.AnoModelo ?? lead.anoModelo}</p>
                                         <p><strong>Cidade:</strong> {lead.city ?? lead.Cidade}</p>
@@ -776,7 +836,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                     )}
                                     
                                     {/* 4., 5., 6. Demais campos (Prêmio, Comissão, Parcelamento) */}
-                                    <div className="grid grid-cols-2 gap-3 mt-4"> {/* Adicionado mt-4 para espaçamento após os novos campos */}
+                                    <div className="grid grid-cols-2 gap-3 mt-4">
                                         {/* Prêmio Líquido (Input) */}
                                         <div>
                                             <label className="text-xs font-semibold text-gray-600 block mb-1">Prêmio Líquido</label>
@@ -785,7 +845,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                                 <input
                                                     type="text"
                                                     placeholder="0,00"
-                                                    value={premioLiquidoInputDisplay[`${leadKey}`] || ''}
+                                                    value={premioLiquidoInputDisplay[`${leadKey}`] || (valores[`${leadKey}`]?.PremioLiquido !== undefined && valores[`${leadKey}`]?.PremioLiquido !== null ? formatarMoeda(valores[`${leadKey}`].PremioLiquido) : (lead.PremioLiquido ?? lead.premioLiquido ?? ''))}
                                                     onChange={(e) => handlePremioLiquidoChange(leadKey, e.target.value)}
                                                     onBlur={() => handlePremioLiquidoBlur(leadKey)}
                                                     disabled={isSeguradoraPreenchida}
@@ -843,7 +903,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                         <input
                                             id={`vigencia-inicio-${leadKey}`}
                                             type="date"
-                                            value={vigencia[`${leadKey}`]?.inicio || ''}
+                                            value={vigencia[`${leadKey}`]?.inicio || getDataParaComparacao(lead.VigenciaInicial ?? lead.vigenciaInicial ?? '') || ''}
                                             onChange={(e) => handleVigenciaInicioChange(leadKey, e.target.value)}
                                             disabled={isSeguradoraPreenchida}
                                             className="w-full p-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:cursor-not-allowed transition duration-150 focus:ring-green-500 focus:border-green-500"
@@ -856,7 +916,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                         <input
                                             id={`vigencia-final-${leadKey}`}
                                             type="date"
-                                            value={vigencia[`${leadKey}`]?.final || ''}
+                                            value={vigencia[`${leadKey}`]?.final || getDataParaComparacao(lead.VigenciaFinal ?? lead.vigenciaFinal ?? '') || ''}
                                             readOnly
                                             disabled={true}
                                             className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-gray-100 cursor-not-allowed"
@@ -875,7 +935,6 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                                                     valores[`${leadKey}`]?.Parcelamento,
                                                     vigencia[`${leadKey}`]?.inicio,
                                                     vigencia[`${leadKey}`]?.final,
-                                                    // Meio de Pagamento e Cartão Porto Novo na Confirmação 
                                                     valores[`${leadKey}`]?.MeioPagamento || '',
                                                     valores[`${leadKey}`]?.CartaoPortoNovo || ''
                                                 );
@@ -911,7 +970,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                         <button
                             onClick={handlePaginaAnterior}
                             disabled={paginaCorrigida <= 1 || isLoading}
-                            className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
+                            className={`px-4 py-2 rounded-lg border text-sm font-medium transition duration-150 shadow-md ${
                                 (paginaCorrigida <= 1 || isLoading)
                                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                                     : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
@@ -927,7 +986,7 @@ const LeadsFechados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onU
                         <button
                             onClick={handlePaginaProxima}
                             disabled={paginaCorrigida >= totalPaginas || isLoading}
-                            className={`px-4 py-2 rounded-lg border texto-sm font-medium transition duration-150 shadow-md ${
+                            className={`px-4 py-2 rounded-lg border text-sm font-medium transition duration-150 shadow-md ${
                                 (paginaCorrigida >= totalPaginas || isLoading)
                                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                                     : 'bg-white border-indigo-500 text-indigo-600 hover:bg-indigo-50'
