@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
-import { RefreshCcw, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat, PieChart } from 'lucide-react'; // Adicionado Repeat e PieChart
+import { db } from './firebase';
+import { RefreshCcw, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat, PieChart } from 'lucide-react';
 
 const Dashboard = ({ usuarioLogado }) => {
   const [leadsData, setLeadsData] = useState([]);
-  const [renovacoesData, setRenovacoesData] = useState([]); // Novo estado para renovações
+  const [renovacoesData, setRenovacoesData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -54,7 +54,6 @@ const Dashboard = ({ usuarioLogado }) => {
     };
   };
 
-  // Listener para leads e renovações do Firebase
   useEffect(() => {
     const leadsColRef = collection(db, 'leads');
     const unsubscribeLeads = onSnapshot(
@@ -74,12 +73,12 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     );
 
-    const renovacoesColRef = collection(db, 'renovacoes'); // Nova coleção para renovações
+    const renovacoesColRef = collection(db, 'renovacoes');
     const unsubscribeRenovacoes = onSnapshot(
       renovacoesColRef,
       (snapshot) => {
         const renovacoesList = snapshot.docs.map((doc) =>
-          normalizeLead(doc.id, doc.data()) // Reutiliza normalizeLead para renovações
+          normalizeLead(doc.id, doc.data())
         );
         setRenovacoesData(renovacoesList);
       },
@@ -175,10 +174,10 @@ const Dashboard = ({ usuarioLogado }) => {
   }, [leadsData, usuarioLogado, filtroAplicado]);
 
   const filteredRenovacoes = useMemo(() => {
-    let filtered = renovacoesData.filter((renovacao) => canViewLead(renovacao)); // Aplica filtro de visibilidade
+    let filtered = renovacoesData.filter((renovacao) => canViewLead(renovacao));
 
     filtered = filtered.filter((renovacao) => {
-      const dataRenovacaoStr = getValidDateStr(renovacao.createdAt); // Assume que renovações também têm createdAt
+      const dataRenovacaoStr = getValidDateStr(renovacao.createdAt);
       if (!dataRenovacaoStr) return false;
       if (filtroAplicado.inicio && dataRenovacaoStr < filtroAplicado.inicio) return false;
       if (filtroAplicado.fim && dataRenovacaoStr > filtroAplicado.fim) return false;
@@ -196,17 +195,21 @@ const Dashboard = ({ usuarioLogado }) => {
     let agendadosHoje = 0;
     let perdidos = 0;
 
-    let portoSeguro = 0;
-    let azulSeguros = 0;
-    let itauSeguros = 0;
-    let demaisSeguradoras = 0;
-    let totalPremioLiquido = 0;
-    let somaTotalPercentualComissao = 0;
-    let totalVendasParaMedia = 0;
+    let portoSeguroLeads = 0;
+    let azulSegurosLeads = 0;
+    let itauSegurosLeads = 0;
+    let demaisSeguradorasLeads = 0;
+    let totalPremioLiquidoLeads = 0;
+    let somaTotalPercentualComissaoLeads = 0;
+    let totalVendasParaMediaLeads = 0;
 
     let totalRenovacoes = 0;
     let renovados = 0;
     let renovacoesPerdidas = 0;
+    let portoSeguroRenovacoes = 0;
+    let azulSegurosRenovacoes = 0;
+    let itauSegurosRenovacoes = 0;
+    let demaisSeguradorasRenovacoes = 0;
     let premioLiquidoRenovados = 0;
     let somaComissaoRenovados = 0;
     let totalRenovadosParaMedia = 0;
@@ -225,21 +228,21 @@ const Dashboard = ({ usuarioLogado }) => {
         vendas++;
         const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
         if (segNormalized === 'porto seguro') {
-          portoSeguro++;
+          portoSeguroLeads++;
         } else if (segNormalized === 'azul seguros') {
-          azulSeguros++;
+          azulSegurosLeads++;
         } else if (segNormalized === 'itau seguros') {
-          itauSeguros++;
+          itauSegurosLeads++;
         } else if (demaisSeguradorasLista.includes(segNormalized)) {
-          demaisSeguradoras++;
+          demaisSeguradorasLeads++;
         }
 
         const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
-        totalPremioLiquido += premio;
+        totalPremioLiquidoLeads += premio;
 
         const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
-        somaTotalPercentualComissao += comissao;
-        totalVendasParaMedia++;
+        somaTotalPercentualComissaoLeads += comissao;
+        totalVendasParaMediaLeads++;
 
       } else if (s === 'Em Contato') {
         emContato++;
@@ -267,18 +270,29 @@ const Dashboard = ({ usuarioLogado }) => {
 
       if (s === 'Renovado') {
         renovados++;
+        const segNormalized = (renovacao.Seguradora || '').toString().trim().toLowerCase();
+        if (segNormalized === 'porto seguro') {
+          portoSeguroRenovacoes++;
+        } else if (segNormalized === 'azul seguros') {
+          azulSegurosRenovacoes++;
+        } else if (segNormalized === 'itau seguros') {
+          itauSegurosRenovacoes++;
+        } else if (demaisSeguradorasLista.includes(segNormalized)) {
+          demaisSeguradorasRenovacoes++;
+        }
+
         const premio = parseFloat(String(renovacao.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
         premioLiquidoRenovados += premio;
         const comissao = parseFloat(String(renovacao.Comissao).replace(/%/g, '')) || 0;
         somaComissaoRenovados += comissao;
         totalRenovadosParaMedia++;
-      } else if (s === 'Perdido') { // Assumindo que renovações também podem ser 'Perdido'
+      } else if (s === 'Perdido') {
         renovacoesPerdidas++;
       }
     });
 
-    const taxaConversao = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
-    const comissaoMediaGlobal = totalVendasParaMedia > 0 ? somaTotalPercentualComissao / totalVendasParaMedia : 0;
+    const taxaConversaoLeads = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
+    const comissaoMediaGlobalLeads = totalVendasParaMediaLeads > 0 ? somaTotalPercentualComissaoLeads / totalVendasParaMediaLeads : 0;
     const mediaComissaoRenovados = totalRenovadosParaMedia > 0 ? somaComissaoRenovados / totalRenovadosParaMedia : 0;
     const taxaRenovacao = totalRenovacoes > 0 ? (renovados / totalRenovacoes) * 100 : 0;
 
@@ -289,16 +303,20 @@ const Dashboard = ({ usuarioLogado }) => {
       semContato,
       agendadosHoje,
       perdidos,
-      taxaConversao: taxaConversao.toFixed(2),
-      portoSeguro,
-      azulSeguros,
-      itauSeguros,
-      demaisSeguradoras,
-      totalPremioLiquido,
-      comissaoMediaGlobal: comissaoMediaGlobal.toFixed(2),
+      taxaConversaoLeads: taxaConversaoLeads.toFixed(2),
+      portoSeguroLeads,
+      azulSegurosLeads,
+      itauSegurosLeads,
+      demaisSeguradorasLeads,
+      totalPremioLiquidoLeads,
+      comissaoMediaGlobalLeads: comissaoMediaGlobalLeads.toFixed(2),
       totalRenovacoes,
       renovados,
       renovacoesPerdidas,
+      portoSeguroRenovacoes,
+      azulSegurosRenovacoes,
+      itauSegurosRenovacoes,
+      demaisSeguradorasRenovacoes,
       premioLiquidoRenovados,
       mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
       taxaRenovacao: taxaRenovacao.toFixed(2),
@@ -318,7 +336,6 @@ const Dashboard = ({ usuarioLogado }) => {
     textAlign: 'center',
   };
 
-  // Componente simples de gráfico de pizza para a taxa de renovação
   const PieChartComponent = ({ percentage }) => {
     const radius = 40;
     const circumference = 2 * Math.PI * radius;
@@ -440,7 +457,8 @@ const Dashboard = ({ usuarioLogado }) => {
 
       {!isLoading && (
         <>
-          {/* Primeira linha de contadores - Leads */}
+          {/* Seção de Seguros Novos */}
+          <h2 style={{ marginTop: '40px', marginBottom: '20px', fontSize: '28px', fontWeight: 'bold', color: '#333' }}>Seguros Novos</h2>
           <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
             <div style={{ ...boxStyle, backgroundColor: '#eee', color: '#333' }}>
               <h3>Total de Leads</h3>
@@ -448,7 +466,7 @@ const Dashboard = ({ usuarioLogado }) => {
             </div>
             <div style={{ ...boxStyle, backgroundColor: '#9C27B0' }}>
               <h3>Taxa de Conversão</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.taxaConversao}%</p>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.taxaConversaoLeads}%</p>
             </div>
             <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
               <h3>Vendas</h3>
@@ -468,32 +486,30 @@ const Dashboard = ({ usuarioLogado }) => {
             </div>
           </div>
 
-          {/* Segunda linha de contadores - Seguradoras */}
           <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
             <div style={{ ...boxStyle, backgroundColor: '#003366' }}>
               <h3>Porto Seguro</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.portoSeguro}</p>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.portoSeguroLeads}</p>
             </div>
             <div style={{ ...boxStyle, backgroundColor: '#87CEFA' }}>
               <h3>Azul Seguros</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.azulSeguros}</p>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.azulSegurosLeads}</p>
             </div>
             <div style={{ ...boxStyle, backgroundColor: '#FF8C00' }}>
               <h3>Itau Seguros</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.itauSeguros}</p>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.itauSegurosLeads}</p>
             </div>
             <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
               <h3>Demais Seguradoras</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.demaisSeguradoras}</p>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.demaisSeguradorasLeads}</p>
             </div>
           </div>
 
-          {/* Linha de Prêmio Líquido e Comissão (visível para todos) */}
-          <div style={{ display: 'flex', gap: '20px', marginTop: '20px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', gap: '20px', marginTop: '20px', marginBottom: '40px' }}>
             <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
               <h3>Total Prêmio Líquido</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                {dashboardStats.totalPremioLiquido.toLocaleString('pt-BR', {
+                {dashboardStats.totalPremioLiquidoLeads.toLocaleString('pt-BR', {
                   style: 'currency',
                   currency: 'BRL',
                 })}
@@ -503,27 +519,54 @@ const Dashboard = ({ usuarioLogado }) => {
             <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
               <h3>Média Comissão</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                {dashboardStats.comissaoMediaGlobal.replace('.', ',')}%
+                {dashboardStats.comissaoMediaGlobalLeads.replace('.', ',')}%
               </p>
             </div>
           </div>
 
-          {/* Nova seção de Renovações */}
+          {/* Seção de Renovações */}
           <h2 style={{ marginTop: '40px', marginBottom: '20px', fontSize: '28px', fontWeight: 'bold', color: '#333' }}>Renovações</h2>
           <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#673AB7' }}> {/* Cor para Renovações */}
+            <div style={{ ...boxStyle, backgroundColor: '#673AB7' }}>
               <h3>Total de Renovações</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.totalRenovacoes}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#2196F3' }}> {/* Cor para Renovados */}
+            <div style={{ ...boxStyle, backgroundColor: '#2196F3' }}>
               <h3>Renovados</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.renovados}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF5722' }}> {/* Cor para Renovações Perdidas */}
+            <div style={{ ...boxStyle, backgroundColor: '#FF5722' }}>
               <h3>Renovações Perdidas</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.renovacoesPerdidas}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#00BCD4' }}> {/* Cor para Prêmio Líquido Renovados */}
+            <div style={{ ...boxStyle, backgroundColor: '#FFC107', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+              <h3>Taxa de Renovação</h3>
+              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} />
+            </div>
+          </div>
+
+          {/* Contadores de Seguradoras para Renovações */}
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
+            <div style={{ ...boxStyle, backgroundColor: '#003366' }}>
+              <h3>Porto Seguro Renov.</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.portoSeguroRenovacoes}</p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#87CEFA' }}>
+              <h3>Azul Seguros Renov.</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.azulSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#FF8C00' }}>
+              <h3>Itau Seguros Renov.</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.itauSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
+              <h3>Demais Seguradoras Renov.</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{dashboardStats.demaisSeguradorasRenovacoes}</p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
+            <div style={{ ...boxStyle, backgroundColor: '#00BCD4' }}>
               <h3>Prêmio Líquido Renovados</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
                 {dashboardStats.premioLiquidoRenovados.toLocaleString('pt-BR', {
@@ -532,15 +575,11 @@ const Dashboard = ({ usuarioLogado }) => {
                 })}
               </p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#8BC34A' }}> {/* Cor para Média Comissão Renovados */}
+            <div style={{ ...boxStyle, backgroundColor: '#8BC34A' }}>
               <h3>Média Comissão Renovados</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
                 {dashboardStats.mediaComissaoRenovados.replace('.', ',')}%
               </p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FFC107', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-              <h3>Taxa de Renovação</h3>
-              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} />
             </div>
           </div>
         </>
