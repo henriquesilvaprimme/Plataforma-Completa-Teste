@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import LeadRenovacoes from './components/LeadRenovacoes';
 import { RefreshCcw, Bell, Search, Send, Edit, Save, User, ChevronLeft, ChevronRight, CheckCircle, DollarSign, Calendar } from 'lucide-react';
-import { collection, onSnapshot, doc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, query, orderBy, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
 
 // ===============================================
@@ -540,7 +540,6 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         // onUpdateStatus é uma prop, se ela existir, a lógica de atualização de status
         // no componente pai (Leads.jsx) será chamada.
         // Para renovações, a atualização de status pode ser diferente ou não existir.
-        // Se onUpdateStatus for para a coleção 'leads', precisamos de uma função específica para 'renovacoes'.
         // Por enquanto, vamos apenas atualizar o status no Firebase diretamente para 'renovacoes'.
         setIsLoading(true);
         try {
@@ -618,18 +617,15 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
     const openClosingModal = (lead) => {
         setClosingLead(lead);
         setModalNome(lead.Nome || lead.name || lead.nome || '');
-        setModalSeguradora(lead.Seguradora || lead.insurer || '');
-        setModalMeioPagamento(lead.MeioPagamento || '');
-        // CartaoPortoNovo deve ser 'Sim' ou 'Não'
-        setModalCartaoPortoNovo(lead.CartaoPortoNovo ? String(lead.CartaoPortoNovo) : 'Não');
-        setModalPremioLiquido(lead.PremioLiquido ? String(lead.PremioLiquido) : '');
-        // se a comissao vier como '10%' mantém; se vier '10' converte
-        const com = lead.Comissao ?? lead.comissao ?? '';
-        setModalComissao(com ? (String(com).includes('%') ? String(com) : `${String(extractDigits(com) || com)}%`) : '');
-        setModalParcelamento(lead.Parcelamento ? String(lead.Parcelamento) : '1');
+        setModalSeguradora('');
+        setModalMeioPagamento('');
+        setModalCartaoPortoNovo('Não');
+        setModalPremioLiquido('');
+        setModalComissao('');
+        setModalParcelamento('1');
         const hoje = new Date();
         setModalVigenciaInicial(toDateInputValue(hoje));
-        setModalVigenciaFinal(toDateInputValue(addOneYearToDate(hoje))); // Ajustado aqui
+        setModalVigenciaFinal(toDateInputValue(addOneYearToDate(hoje)));
         setIsClosingModalOpen(true);
     };
 
@@ -904,15 +900,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                         <p className="text-sm font-semibold text-gray-700">
                                             Vigência Final: <strong className="text-indigo-600">{formatarData(lead.VigenciaFinal)}</strong>
                                         </p>
-                                        {/* Botão de Fechar Venda */}
-                                        {lead.status !== 'Fechado' && (
-                                            <button
-                                                onClick={() => handleConfirmStatus(lead.id, 'Fechado')}
-                                                className="ml-4 px-3 py-1 bg-green-500 text-white text-xs font-semibold rounded-full hover:bg-green-600 transition duration-150 shadow-sm"
-                                            >
-                                                <CheckCircle size={14} className="inline-block mr-1" /> Fechar Venda
-                                            </button>
-                                        )}
+                                        
                                     </div>
                                     <p className="mt-1 text-xs text-gray-400">
                                         Registrado em: {formatarData(lead.registeredAt)}
