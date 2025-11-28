@@ -13,8 +13,8 @@ import {
 import { RefreshCcw } from 'lucide-react'; // ícone (opcional)
 
 /*
-  // Substitua pelos seus valores do Firebase
-const firebaseConfig = {
+ 
+ const firebaseConfig = {
   apiKey: "AIzaSyAMLDTyqFCQhfll1yPMxUtttgjIxCisIP4",
   authDomain: "painel-de-leads-novos.firebaseapp.com",
   projectId: "painel-de-leads-novos",
