@@ -890,7 +890,7 @@ function App() {
               <Dashboard
                 usuarioLogado={usuarioLogado}
                 leads={leads}
-                renovacoes={leads} /* Adicionado para contagem de Renovações */
+                renovacoes={leads} /* Adicionado para contagem de Renovações (usa leads) */
               />
             }
           />
@@ -933,8 +933,7 @@ function App() {
                 leadSelecionado={leadSelecionado}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
-                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário 
-                uma função específica para renovações
+                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovações
                 salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovações
                 saveLocalChange={saveLocalChange}
                 forceSyncWithSheets={forceSyncWithSheets}
@@ -952,8 +951,7 @@ function App() {
                 usuarios={usuarios}
                 onUpdateInsurer={atualizarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
                 onConfirmInsurer={confirmarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
-                onUpdateDetalhes={atualizarDetalhesLeadFechado} // Usando 
-                a função de LeadsFechados, se aplicável
+                onUpdateDetalhes={atualizarDetalhesLeadFechado} // Usando a função de LeadsFechados, se aplicável
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
