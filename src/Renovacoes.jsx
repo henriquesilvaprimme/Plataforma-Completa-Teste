@@ -1116,4 +1116,4 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
     );
 };
 
-export default Renovacoes;.
+export default Renovacoes;
