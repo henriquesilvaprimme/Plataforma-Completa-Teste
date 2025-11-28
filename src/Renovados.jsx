@@ -1,3 +1,5 @@
+Por favor. Poderia somente criar a logica no codigo abaixo para o usuario Admin possa ver todos os leads da aba Renovados. Nao mude mais nada no codigo, ai me envie ele completo.
+
 import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCcw, Search, ChevronLeft, ChevronRight, CheckCircle, DollarSign, Calendar } from 'lucide-react';
 import { db } from './firebase'; // Importar o db do firebase
@@ -135,15 +137,6 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS (AGORA COM FILTRAGEM LOCAL) ---
     useEffect(() => {
         let renovadosParaFiltrar = [...allRenovados]; // Começa com TODOS os renovados
-
-        // AJUSTE AQUI: Filtragem para usuários não-admin
-        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
-            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
-            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
-                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
-                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
-            });
-        }
 
         // 1. Filtragem por Data (Local)
         if (filtroData) {
