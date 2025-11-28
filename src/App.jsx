@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { collection, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from 'firebase/firestore';
-import { db } from './firebaseConfig'; // Importe a instância do Firestore
+import { db } from './firebase'; // Importe a instância do Firestore
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
