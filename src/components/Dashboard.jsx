@@ -1,30 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
 
-// Firebase v9 (modular) imports
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
-
-// Substitua pelos seus valores do Firebase
-const firebaseConfig = {
-  apiKey: "AIzaSyAMLDTyqFCQhfll1yPMxUtttgjIxCisIP4",
-  authDomain: "painel-de-leads-novos.firebaseapp.com",
-  projectId: "painel-de-leads-novos",
-  storageBucket: "painel-de-leads-novos.firebasestorage.app",
-  messagingSenderId: "630294246900",
-  appId: "1:630294246900:web:764b52308c2ffa805175a1"
-};
-
-// Inicializa Firebase (proteção contra inicialização duplicada)
-let app;
-if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
-} else {
-  app = getApp();
-}
-const db = getFirestore(app);
-
-const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) => {
+const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'User', nome: '' } }) => {
   const [leadsClosed, setLeadsClosed] = useState([]);
   const [loading, setLoading] = useState(true); // Estado original do Dashboard
   const [isLoading, setIsLoading] = useState(false); // Novo estado para o botão de refresh
@@ -43,38 +20,65 @@ const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) =
   const [dataFim, setDataFim] = useState(getDataHoje());
   const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  // Função auxiliar para validar e formatar a data (mantida da iteração anterior)
+  // Função auxiliar para validar e formatar a data, agora suportando strings, Date e Firestore Timestamp
   const getValidDateStr = (dateValue) => {
     if (!dateValue) return null;
-    const dateObj = new Date(dateValue);
-    if (isNaN(dateObj.getTime())) {
+
+    // Firestore Timestamp (objeto com seconds)
+    if (typeof dateValue === 'object' && dateValue.seconds && typeof dateValue.seconds === 'number') {
+      const d = new Date(dateValue.seconds * 1000);
+      return d.toISOString().slice(0, 10);
+    }
+
+    // Date object
+    if (dateValue instanceof Date) {
+      if (isNaN(dateValue.getTime())) return null;
+      return dateValue.toISOString().slice(0, 10);
+    }
+
+    // String or number
+    try {
+      const dateObj = new Date(dateValue);
+      if (isNaN(dateObj.getTime())) return null;
+      return dateObj.toISOString().slice(0, 10);
+    } catch (err) {
       return null;
     }
-    return dateObj.toISOString().slice(0, 10);
   };
 
-  // Busca leads fechados (agora via Firebase Firestore)
+  // Antes: buscava no Firebase. Agora: utiliza os dados passados via props (leadsFechados).
+  // Função usada pelo botão de refresh — atualiza o estado interno a partir das props.
   const buscarLeadsClosedFromAPI = async () => {
     setIsLoading(true); // Ativa o loading do botão
     setLoading(true); // Ativa o loading original do Dashboard
     try {
-      // Nome da coleção no Firestore - adapte se necessário
-      const colecao = collection(db, 'leadsClosed');
-      const snapshot = await getDocs(colecao);
-      const dadosLeads = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setLeadsClosed(dadosLeads);
+      // Atualiza o estado interno com o que foi passado pelo App (leadsFechados)
+      setLeadsClosed(Array.isArray(leadsFechados) ? leadsFechados : []);
     } catch (error) {
-      console.error('Erro ao buscar leads do Firebase:', error);
+      console.error('Erro ao atualizar leads fechados a partir das props:', error);
     } finally {
       setIsLoading(false); // Desativa o loading do botão
       setLoading(false); // Desativa o loading original do Dashboard
     }
   };
 
-  // refresh automático ao entrar na aba (similar ao useEffect do LeadsFechados)
+  // Sincroniza leadsFechados (prop) para o estado interno quando mudar
   useEffect(() => {
-    buscarLeadsClosedFromAPI();
-  }, []); // Array de dependências vazia para rodar apenas uma vez na montagem
+    setLeadsClosed(Array.isArray(leadsFechados) ? leadsFechados : []);
+    setLoading(false);
+  }, [leadsFechados]);
+
+  // refresh automático ao entrar na aba (mantido para compatibilidade)
+  useEffect(() => {
+    // Se houver dados em props, apenas usa-os; caso contrário dispara a função que "atualiza" a partir das props (no App os listeners atualizam)
+    if (Array.isArray(leadsFechados) && leadsFechados.length > 0) {
+      setLeadsClosed(leadsFechados);
+      setLoading(false);
+    } else {
+      buscarLeadsClosedFromAPI();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // só na montagem
 
   const aplicarFiltroData = () => {
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
@@ -98,11 +102,15 @@ const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) =
   let leadsFiltradosClosed =
     (usuarioLogado?.tipo === 'Admin')
       ? (leadsClosed || [])
-      : (leadsClosed || []).filter((lead) => lead.Responsavel === (usuarioLogado?.nome || ''));
+      : (leadsClosed || []).filter((lead) => {
+          // Suporta diferentes chaves: Responsavel, responsavel, usuarioId/usuario
+          const resp = (lead.Responsavel ?? lead.responsavel ?? '').toString();
+          return resp === (usuarioLogado?.nome || '');
+        });
 
   // Filtro de data nos leads fechados
   leadsFiltradosClosed = (leadsFiltradosClosed || []).filter((lead) => {
-    const dataLeadStr = getValidDateStr(lead.Data);
+    const dataLeadStr = getValidDateStr(lead.Data ?? lead.createdAt ?? lead.DataFechamento ?? lead.Data || null);
     if (!dataLeadStr) return false;
     if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
     if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
@@ -111,7 +119,7 @@ const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) =
 
   // Normalização helper para o campo Seguradora (trim + lowercase)
   const getSegNormalized = (lead) => {
-    return (lead?.Seguradora || '').toString().trim().toLowerCase();
+    return (lead?.Seguradora ?? lead?.insurer ?? lead?.Insurer ?? '').toString().trim().toLowerCase();
   };
 
   // Lista de seguradoras que devem ser contadas como "Demais Seguradoras"
@@ -148,7 +156,7 @@ const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) =
 
   // Soma de prêmio líquido
   const totalPremioLiquido = leadsFiltradosClosed.reduce(
-    (acc, lead) => acc + (Number(lead.PremioLiquido) || 0),
+    (acc, lead) => acc + (Number(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? 0) || 0),
     0
   );
 
@@ -157,7 +165,7 @@ const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) =
 
   // 1. Soma total dos percentuais de comissão
   const somaTotalPercentualComissao = leadsFiltradosClosed.reduce(
-    (acc, lead) => acc + (Number(lead.Comissao) || 0),
+    (acc, lead) => acc + (Number(lead.Comissao ?? lead.comissao ?? 0) || 0),
     0
   );
 
@@ -232,7 +240,7 @@ const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) =
         {/* Botão de Refresh */}
         <button
           title='Clique para atualizar os dados'
-          onClick={buscarLeadsClosedFromAPI} // Chama a função que busca e atualiza os leads fechados
+          onClick={buscarLeadsClosedFromAPI} // Chama a função que atualiza os leads fechados a partir das props
           disabled={isLoading}
           style={{
             backgroundColor: '#6c757d', // Cor cinza para o botão de refresh
