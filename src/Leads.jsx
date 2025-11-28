@@ -729,10 +729,10 @@ const Leads = ({
     return `${yyyy}-${mm}-${dd}`; // formato para <input type="date">
   };
 
-  const addOneYearDateInputValue = (date = new Date()) => {
+  const addOneYearToDate = (date) => {
     const d = new Date(date);
     d.setFullYear(d.getFullYear() + 1);
-    return toDateInputValue(d);
+    return d;
   };
 
   // Formatação de moeda para input: aceita digitação de números e formatado como R$
@@ -779,7 +779,7 @@ const Leads = ({
     setModalParcelamento(lead.Parcelamento ? String(lead.Parcelamento) : '1');
     const hoje = new Date();
     setModalVigenciaInicial(toDateInputValue(hoje));
-    setModalVigenciaFinal(addOneYearDateInputValue(hoje));
+    setModalVigenciaFinal(toDateInputValue(addOneYearToDate(hoje))); // Ajustado aqui
     setIsClosingModalOpen(true);
   };
 
