@@ -194,7 +194,8 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             Comissao: safe(data.Comissao) || '',
             Parcelamento: safe(data.Parcelamento) || '',
             VigenciaInicial: data.VigenciaInicial, // Mantém como está para ser formatado na exibição
-            VigenciaFinal: data.VigenciaFinal,     // Mantém como está para ser formatado na exibição
+            // AJUSTE CRÍTICO AQUI: VigenciaFinal - Busca diretamente a string
+            VigenciaFinal: safe(data.VigenciaFinal) || '',
             createdAt: data.createdAt,
             registeredAt: data.registeredAt, // Mantém como está para ser formatado na exibição
             // AJUSTE CRÍTICO AQUI: Unificando o campo responsavel
@@ -526,7 +527,12 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
 
     // --- Outras Funções (Mantidas) ---
 
+    // AJUSTE CRÍTICO AQUI: formatarData não é mais necessário para VigenciaFinal
     const formatarData = (data) => {
+        // Se a data já for uma string DD/MM/AAAA, retorna ela mesma
+        if (typeof data === 'string' && data.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+            return data;
+        }
         return formatDDMMYYYY(data);
     };
 
@@ -739,6 +745,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                 MeioPagamento: modalMeioPagamento || '',
                 CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
                 VigenciaInicial: formatDDMMYYYY(vigenciaInicialDate),
+                // AJUSTE CRÍTICO AQUI: VigenciaFinal - Salva a string formatada
                 VigenciaFinal: formatDDMMYYYY(vigenciaFinalDate),
                 Nome: modalNome,
                 name: modalNome,
@@ -939,7 +946,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                     {/* Linha de Vigência Final */}
                                     <div className="mt-3 flex items-center justify-start">
                                         <p className="text-sm font-semibold text-gray-700">
-                                            Vigência Final: <strong className="text-indigo-600">{formatarData(lead.VigenciaFinal)}</strong>
+                                            Vigência Final: <strong className="text-indigo-600">{lead.VigenciaFinal}</strong> {/* AJUSTE CRÍTICO AQUI: Exibe diretamente a string */}
                                         </p>
 
                                     </div>
