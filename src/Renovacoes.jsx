@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import Lead from './components/Lead';
+import Lead from './components/Lead'; // Corrigido para Lead
 import { RefreshCcw, Bell, Search, Send, Edit, Save, User, ChevronLeft, ChevronRight } from 'lucide-react';
 import { collection, onSnapshot, doc, updateDoc, query, orderBy } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
@@ -188,7 +188,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             const [dia, mes, ano] = statusDateStr.split('/');
             const statusDate = new Date(`${ano}-${mes}-${dia}T00:00:00`);
             const statusDateFormatted = statusDate.toLocaleDateString('pt-BR');
-            return statusDateFormatted === todayFormatted;
+            return lead.status.startsWith('Agendado') && statusDateFormatted === todayFormatted;
         });
         setHasScheduledToday(todayAppointments.length > 0);
     }, [leadsData]); // Alterado para leadsData
