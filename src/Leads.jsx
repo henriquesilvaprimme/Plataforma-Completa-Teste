@@ -157,6 +157,8 @@ const Leads = ({
       agendados: data.agendados ?? false,
       MeioPagamento: data.MeioPagamento ?? '',
       CartaoPortoNovo: data.CartaoPortoNovo ?? '',
+      closedAt: data.closedAt ?? null, // Adicionado closedAt
+      registeredAt: data.registeredAt ?? null, // Adicionado registeredAt
       // Mantém demais campos brutos se houver necessidade
       ...data,
     };
@@ -179,6 +181,30 @@ const Leads = ({
     } catch {
       return '';
     }
+  };
+
+  // NOVA FUNÇÃO: Formata um objeto Date para "DD/MM/AAAA"
+  const formatDDMMYYYY = (date) => {
+    if (!date) return '';
+    const d = date instanceof Date ? date : date.toDate(); // Converte Timestamp para Date
+    if (isNaN(d.getTime())) return '';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  // NOVA FUNÇÃO: Formata um objeto Date para "DD/MM/AAAA HH:MM"
+  const formatDDMMYYYYHHMM = (date) => {
+    if (!date) return '';
+    const d = date instanceof Date ? date : date.toDate(); // Converte Timestamp para Date
+    if (isNaN(d.getTime())) return '';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
   };
 
   // Listener em tempo real para leads
@@ -648,6 +674,7 @@ const Leads = ({
       onUpdateStatus && onUpdateStatus(leadId, novoStatus, phoneOrDate);
     } catch (err) {
       console.warn('onUpdateStatus disparado, mas houve erro/ausência:', err);
+      // Não interrompe o fluxo, apenas loga o erro
     }
 
     setIsLoading(true);
@@ -799,9 +826,9 @@ const Leads = ({
 
     try {
       const leadId = String(closingLead.id);
-      // Converte datas do input para ISO strings
-      const vigIniISO = modalVigenciaInicial ? new Date(`${modalVigenciaInicial}T00:00:00`).toISOString() : '';
-      const vigFinISO = modalVigenciaFinal ? new Date(`${modalVigenciaFinal}T00:00:00`).toISOString() : '';
+      // Converte datas do input para objetos Date
+      const vigenciaInicialDate = modalVigenciaInicial ? new Date(`${modalVigenciaInicial}T00:00:00`) : null;
+      const vigenciaFinalDate = modalVigenciaFinal ? new Date(`${modalVigenciaFinal}T00:00:00`) : null;
 
       // --- NOVO: grava também em 'renovacoes' (mesmo payload, mesmo doc id) ---
       try {
@@ -823,15 +850,15 @@ const Leads = ({
           PremioLiquido: modalPremioLiquido || '',
           Comissao: modalComissao || '',
           Parcelamento: modalParcelamento || '',
-          VigenciaInicial: vigIniISO || '',
-          VigenciaFinal: vigFinISO || '',
+          VigenciaInicial: vigenciaInicialDate ? formatDDMMYYYY(vigenciaInicialDate) : '', // Formatado
+          VigenciaFinal: vigenciaFinalDate ? formatDDMMYYYY(vigenciaFinalDate) : '',     // Formatado
           Status: '', // Status sem preenchimento
           Observacao: closingLead.observacao ?? closingLead.Observacao ?? '',
           Responsavel: '', // Responsavel sem preenchimento
           Data: closingLead.Data ?? formatDDMMYYYYFromISO(closingLead.createdAt) ?? '',
           createdAt: closingLead.createdAt ?? null,
-          closedAt: serverTimestamp(),
-          registeredAt: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString(), // Data atual + 1 ano
+          closedAt: formatDDMMYYYYHHMM(new Date()), // Formatado
+          registeredAt: formatDDMMYYYY(new Date()), // Formatado para data atual
         };
         await setDoc(renovRef, renovPayload);
       } catch (errRenov) {
@@ -844,15 +871,15 @@ const Leads = ({
       const originalRef = doc(db, 'leads', leadId);
       const updatePayload = {
         status: 'Fechado',
-        closedAt: serverTimestamp(),
+        closedAt: serverTimestamp(), // Mantém serverTimestamp para o lead original no Firestore
         Seguradora: modalSeguradora || '',
         PremioLiquido: modalPremioLiquido || '',
         Comissao: modalComissao || '',
         Parcelamento: modalParcelamento || '',
         MeioPagamento: modalMeioPagamento || '',
         CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
-        VigenciaInicial: vigIniISO || '',
-        VigenciaFinal: vigFinISO || '',
+        VigenciaInicial: vigenciaInicialDate ? formatDDMMYYYY(vigenciaInicialDate) : '', // Formatado
+        VigenciaFinal: vigenciaFinalDate ? formatDDMMYYYY(vigenciaFinalDate) : '',     // Formatado
         Nome: modalNome,
         name: modalNome,
         insurerConfirmed: true, // Marca como confirmado para exibir o layout de fechado
@@ -871,8 +898,8 @@ const Leads = ({
             Parcelamento: modalParcelamento || '',
             MeioPagamento: modalMeioPagamento || '',
             CartaoPortoNovo: modalMeioPagamento === 'CP' ? (modalCartaoPortoNovo || 'Não') : '',
-            VigenciaInicial: vigIniISO || '',
-            VigenciaFinal: vigFinISO || '',
+            VigenciaInicial: vigenciaInicialDate ? formatDDMMYYYY(vigenciaInicialDate) : '', // Formatado
+            VigenciaFinal: vigenciaFinalDate ? formatDDMMYYYY(vigenciaFinalDate) : '',     // Formatado
             Nome: modalNome,
             insurerConfirmed: true,
           },
@@ -1113,8 +1140,8 @@ const Leads = ({
                           Vigência
                         </h3>
                         <div className="space-y-2 text-sm text-gray-700 mb-6">
-                          <p><strong>Início:</strong> {formatDDMMYYYYFromISO(lead.VigenciaInicial)}</p>
-                          <p><strong>Término:</strong> {formatDDMMYYYYFromISO(lead.VigenciaFinal)}</p>
+                          <p><strong>Início:</strong> {lead.VigenciaInicial}</p> {/* Já formatado */}
+                          <p><strong>Término:</strong> {lead.VigenciaFinal}</p> {/* Já formatado */}
                         </div>
                         <div className="w-full py-3 px-4 rounded-xl font-bold bg-green-100 text-green-700 flex items-center justify-center border border-green-300">
                           <CheckCircle size={20} className="mr-2" />
