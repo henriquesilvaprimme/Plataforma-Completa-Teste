@@ -1,278 +1,688 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { initializeApp, getApps } from 'firebase/app';
-import {
-  getFirestore,
-  collection,
-  query,
-  where,
-  onSnapshot,
-  getDocs
-} from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
+import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat } from 'lucide-react';
 
-// Substitua pelos seus valores do Firebase
-const firebaseConfig = {
-  apiKey: "AIzaSyAMLDTyqFCQhfll1yPMxUtttgjIxCisIP4",
-  authDomain: "painel-de-leads-novos.firebaseapp.com",
-  projectId: "painel-de-leads-novos",
-  storageBucket: "painel-de-leads-novos.firebasestorage.app",
-  messagingSenderId: "630294246900",
-  appId: "1:630294246900:web:764b52308c2ffa805175a1"
-};
+const Dashboard = ({ usuarioLogado }) => {
+  const [leadsData, setLeadsData] = useState([]);
+  const [renovacoesData, setRenovacoesData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
-if (!getApps().length) {
-  initializeApp(firebaseConfig);
-}
-const db = getFirestore();
+  const getPrimeiroDiaMes = () => {
+    const hoje = new Date();
+    return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+  };
 
-const InlineRefreshIcon = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-    <path d="M21 12a9 9 0 10-2.4 6.04" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <path d="M21 3v6h-6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
+  const getDataHoje = () => {
+    return new Date().toISOString().slice(0, 10);
+  };
 
-const Dashboard = ({
-  leads = [],
-  leadsFechados = [],
-  usuarioLogado = { tipo: 'User', nome: '' },
-  sessionId = null,
-  sessionField = 'sessao'
-}) => {
-  const [loading, setLoading] = useState(true);
-  const [isRefreshLoading, setIsRefreshLoading] = useState(false);
-  const [leadsSessionFirestore, setLeadsSessionFirestore] = useState([]);
-  const [debugMsg, setDebugMsg] = useState('');
+  const [dataInicio, setDataInicio] = useState(getPrimeiroDiaMes());
+  const [dataFim, setDataFim] = useState(getDataHoje());
+  const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  const possibleSessionFields = useMemo(() => {
-    const base = [sessionField].filter(Boolean);
-    ['sessionId','session_id','session','sessao','sessaoId','sessao_id'].forEach((f) => {
-      if (!base.includes(f)) base.push(f);
-    });
-    return base;
-  }, [sessionField]);
+  const normalizeLead = (docId, data = {}) => {
+    const safe = (v) => (v === undefined || v === null ? '' : v);
 
-  const getSessionIdFromStorage = () => {
+    const toISO = (v) => {
+      if (!v && v !== 0) return '';
+      if (typeof v === 'object' && typeof v.toDate === 'function') {
+        return v.toDate().toISOString();
+      }
+      if (typeof v === 'string') return v;
+      try {
+        return new Date(v).toISOString();
+      } catch {
+        return '';
+      }
+    };
+
+    return {
+      id: String(docId),
+      status: typeof data.status === 'string' ? data.status : data.Status ?? '',
+      usuarioId:
+        data.usuarioId !== undefined && data.usuarioId !== null
+          ? Number(data.usuarioId)
+          : data.usuarioId ?? null,
+      responsavel: data.responsavel ?? data.Responsavel ?? '',
+      createdAt: toISO(data.createdAt ?? data.data ?? data.Data ?? data.criadoEm),
+      Seguradora: data.Seguradora ?? '',
+      PremioLiquido: data.PremioLiquido ?? '',
+      Comissao: data.Comissao ?? '',
+      ...data,
+    };
+  };
+
+  useEffect(() => {
+    const leadsColRef = collection(db, 'leads');
+    const unsubscribeLeads = onSnapshot(
+      leadsColRef,
+      (snapshot) => {
+        const leadsList = snapshot.docs.map((doc) =>
+          normalizeLead(doc.id, doc.data())
+        );
+        setLeadsData(leadsList);
+        setIsLoading(false);
+        setIsRefreshing(false);
+      },
+      (error) => {
+        console.error('Erro ao buscar leads:', error);
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    );
+
+    const renovacoesColRef = collection(db, 'renovacoes');
+    const unsubscribeRenovacoes = onSnapshot(
+      renovacoesColRef,
+      (snapshot) => {
+        const renovacoesList = snapshot.docs.map((doc) =>
+          normalizeLead(doc.id, doc.data())
+        );
+        setRenovacoesData(renovacoesList);
+      },
+      (error) => {
+        console.error('Erro ao buscar renovações:', error);
+      }
+    );
+
+    return () => {
+      unsubscribeLeads();
+      unsubscribeRenovacoes();
+    };
+  }, []);
+
+  const isAdmin = usuarioLogado?.tipo === 'Admin';
+
+  const getCurrentUserFromPropOrStorage = () => {
+    if (usuarioLogado) return usuarioLogado;
     try {
-      return localStorage.getItem('sessionId') || localStorage.getItem('sessao') || null;
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      return JSON.parse(raw);
     } catch (e) {
       return null;
     }
   };
 
-  const inferSessionFromLeadsProp = () => {
+  const canViewLead = (lead) => {
+    if (isAdmin) return true;
+    const user = getCurrentUserFromPropOrStorage();
+    if (!user) return false;
+
+    const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
+    const userNome = String(user.nome ?? user.name ?? user.usuario ?? '')
+      .trim()
+      .toLowerCase();
+
+    const leadUsuarioId =
+      lead.usuarioId !== undefined && lead.usuarioId !== null
+        ? String(lead.usuarioId).trim()
+        : '';
+    if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+
+    const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '')
+      .trim()
+      .toLowerCase();
+    if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+
+    const leadUsuarioLogin = String(
+      lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? ''
+    ).trim();
+    const userLogin = String(user.usuario ?? '').trim();
+    if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+
+    return false;
+  };
+
+  const isStatusAgendado = (status) => {
+    return typeof status === 'string' && status.startsWith('Agendado');
+  };
+
+  const extractStatusDate = (status) => {
+    if (typeof status !== 'string') return null;
+    const parts = status.split(' - ');
+    return parts.length > 1 ? parts[1] : null;
+  };
+
+  const getValidDateStr = (dateValue) => {
+    if (!dateValue) return null;
     try {
-      if (!Array.isArray(leads) || leads.length === 0) return null;
-      const freq = {};
-      for (const doc of leads) {
-        if (!doc) continue;
-        for (const f of possibleSessionFields) {
-          const val = doc[f];
-          if (val === undefined || val === null) continue;
-          const key = String(val).trim();
-          if (!key) continue;
-          freq[key] = (freq[key] || 0) + 1;
-        }
+      const dateObj = new Date(dateValue);
+      if (isNaN(dateObj.getTime())) {
+        return null;
       }
-      let best = null; let bestCount = 0;
-      Object.entries(freq).forEach(([val, cnt]) => {
-        if (cnt > bestCount) { best = val; bestCount = cnt; }
-      });
-      return best;
-    } catch (err) {
-      console.error('Erro ao inferir session from leads prop:', err);
+      return dateObj.toISOString().slice(0, 10);
+    } catch (e) {
       return null;
     }
   };
 
-  const resolveSessionId = () => {
-    if (sessionId) { setDebugMsg(`Usando sessionId via prop: ${sessionId}`); return sessionId; }
-    const fromStorage = getSessionIdFromStorage();
-    if (fromStorage) { setDebugMsg(`Usando sessionId via localStorage: ${fromStorage}`); return fromStorage; }
-    const inferred = inferSessionFromLeadsProp();
-    if (inferred) { setDebugMsg(`Usando sessionId inferido a partir da prop leads: ${inferred}`); return inferred; }
-    setDebugMsg('sessionId não fornecido nem encontrado no localStorage nem inferido a partir de leads.');
-    return null;
-  };
+  const filteredLeads = useMemo(() => {
+    let filtered = leadsData.filter((lead) => canViewLead(lead));
 
-  useEffect(() => {
-    const sess = resolveSessionId();
-    if (!sess) {
-      console.warn('Dashboard: sessionId não fornecido nem encontrado. Não será feita query no Firestore.');
-      setLeadsSessionFirestore([]);
-      setLoading(false);
-      return;
-    }
+    filtered = filtered.filter((lead) => {
+      const dataLeadStr = getValidDateStr(lead.createdAt);
+      if (!dataLeadStr) return false;
+      if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
+      if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
+      return true;
+    });
 
-    setLoading(true);
-    setDebugMsg(`Criando listener Firestore para sessão '${sess}' usando campo '${sessionField}'`);
+    return filtered;
+  }, [leadsData, usuarioLogado, filtroAplicado]);
 
-    const leadsCol = collection(db, 'leads');
-    const q = query(leadsCol, where(sessionField, '==', sess));
-    let unsubscribeFn = null;
-    try {
-      unsubscribeFn = onSnapshot(
-        q,
-        (snapshot) => {
-          const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-          setLeadsSessionFirestore(docs);
-          setLoading(false);
-          setDebugMsg(`Listener retornou ${docs.length} docs.`);
-        },
-        (err) => {
-          console.error('Erro onSnapshot:', err);
-          setDebugMsg(`Erro onSnapshot: ${String(err)}`);
-          setLeadsSessionFirestore([]);
-          setLoading(false);
+  const filteredRenovacoes = useMemo(() => {
+    let filtered = renovacoesData.filter((renovacao) => canViewLead(renovacao));
+
+    filtered = filtered.filter((renovacao) => {
+      const dataRenovacaoStr = getValidDateStr(renovacao.createdAt);
+      if (!dataRenovacaoStr) return false;
+      if (filtroAplicado.inicio && dataRenovacaoStr < filtroAplicado.inicio) return false;
+      if (filtroAplicado.fim && dataRenovacaoStr > filtroAplicado.fim) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [renovacoesData, usuarioLogado, filtroAplicado]);
+
+  const dashboardStats = useMemo(() => {
+    let totalLeads = 0;
+    let vendas = 0;
+    let emContato = 0;
+    let semContato = 0;
+    let agendadosHoje = 0;
+    let perdidos = 0;
+
+    let portoSeguroLeads = 0;
+    let azulSegurosLeads = 0;
+    let itauSegurosLeads = 0;
+    let demaisSeguradorasLeads = 0;
+    let totalPremioLiquidoLeads = 0;
+    let somaTotalPercentualComissaoLeads = 0;
+    let totalVendasParaMediaLeads = 0;
+
+    let totalRenovacoes = 0;
+    let renovados = 0;
+    let renovacoesPerdidas = 0;
+    let portoSeguroRenovacoes = 0;
+    let azulSegurosRenovacoes = 0;
+    let itauSegurosRenovacoes = 0;
+    let demaisSeguradorasRenovacoes = 0;
+    let premioLiquidoRenovados = 0;
+    let somaComissaoRenovados = 0;
+    let totalRenovadosParaMedia = 0;
+
+    const today = new Date().toLocaleDateString('pt-BR');
+    const demaisSeguradorasLista = [
+      'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
+    ];
+
+    filteredLeads.forEach((lead) => {
+      totalLeads++;
+
+      const s = lead.status ?? '';
+
+      if (s === 'Fechado') {
+        vendas++;
+        const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
+        if (segNormalized === 'porto seguro') {
+          portoSeguroLeads++;
+        } else if (segNormalized === 'azul seguros') {
+          azulSegurosLeads++;
+        } else if (segNormalized === 'itau seguros') {
+          itauSegurosLeads++;
+        } else if (demaisSeguradorasLista.includes(segNormalized)) {
+          demaisSeguradorasLeads++;
         }
-      );
-    } catch (err) {
-      console.error('Erro ao configurar listener:', err);
-      setDebugMsg(`Erro ao configurar listener: ${String(err)}`);
-      setLeadsSessionFirestore([]);
-      setLoading(false);
-    }
 
-    const fallbackTimer = setTimeout(async () => {
-      if (leadsSessionFirestore.length > 0) return;
-      try {
-        setDebugMsg('Fallback: buscando todos os docs e filtrando localmente (cuidado com coleções grandes).');
-        const snap = await getDocs(leadsCol);
-        const allDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        const filtered = allDocs.filter((doc) => {
-          for (const f of possibleSessionFields) {
-            if (!doc) continue;
-            const val = doc[f];
-            if (val === undefined) continue;
-            if (String(val) === String(sess)) return true;
+        const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        totalPremioLiquidoLeads += premio;
+
+        const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
+        somaTotalPercentualComissaoLeads += comissao;
+        totalVendasParaMediaLeads++;
+
+      } else if (s === 'Em Contato') {
+        emContato++;
+      } else if (s === 'Sem Contato') {
+        semContato++;
+      } else if (isStatusAgendado(s)) {
+        const statusDateStr = extractStatusDate(s);
+        if (statusDateStr) {
+          const [dia, mes, ano] = statusDateStr.split('/');
+          const statusDateFormatted = new Date(
+            `${ano}-${mes}-${dia}T00:00:00`
+          ).toLocaleDateString('pt-BR');
+          if (statusDateFormatted === today) {
+            agendadosHoje++;
           }
-          return false;
-        });
-        if (filtered.length > 0) {
-          setLeadsSessionFirestore(filtered);
-          setLoading(false);
-          setDebugMsg(`Fallback encontrou ${filtered.length} leads.`);
-        } else {
-          setDebugMsg('Fallback não encontrou leads para a sessão.');
         }
-      } catch (err) {
-        console.error('Erro no fallback getDocs:', err);
-        setDebugMsg(`Erro no fallback: ${String(err)}`);
+      } else if (s === 'Perdido') {
+        perdidos++;
       }
-    }, 1200);
+    });
 
-    return () => {
-      clearTimeout(fallbackTimer);
-      if (unsubscribeFn) {
-        try { unsubscribeFn(); } catch (e) { /* ignore */ }
+    filteredRenovacoes.forEach((renovacao) => {
+      totalRenovacoes++;
+      const s = renovacao.status ?? '';
+
+      if (s === 'Renovado') {
+        renovados++;
+        const segNormalized = (renovacao.Seguradora || '').toString().trim().toLowerCase();
+        if (segNormalized === 'porto seguro') {
+          portoSeguroRenovacoes++;
+        } else if (segNormalized === 'azul seguros') {
+          azulSegurosRenovacoes++;
+        } else if (segNormalized === 'itau seguros') {
+          itauSegurosRenovacoes++;
+        } else if (demaisSeguradorasLista.includes(segNormalized)) {
+          demaisSeguradorasRenovacoes++;
+        }
+
+        const premio = parseFloat(String(renovacao.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        premioLiquidoRenovados += premio;
+        const comissao = parseFloat(String(renovacao.Comissao).replace(/%/g, '')) || 0;
+        somaComissaoRenovados += comissao;
+        totalRenovadosParaMedia++;
+      } else if (s === 'Perdido') {
+        renovacoesPerdidas++;
       }
+    });
+
+    const taxaConversaoLeads = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
+    const comissaoMediaGlobalLeads = totalVendasParaMediaLeads > 0 ? somaTotalPercentualComissaoLeads / totalVendasParaMediaLeads : 0;
+    const mediaComissaoRenovados = totalRenovadosParaMedia > 0 ? somaComissaoRenovados / totalRenovadosParaMedia : 0;
+    const taxaRenovacao = totalRenovacoes > 0 ? (renovados / totalRenovacoes) * 100 : 0;
+
+    return {
+      totalLeads,
+      vendas,
+      emContato,
+      semContato,
+      agendadosHoje,
+      perdidos,
+      taxaConversaoLeads: taxaConversaoLeads.toFixed(2),
+      portoSeguroLeads,
+      azulSegurosLeads,
+      itauSegurosLeads,
+      demaisSeguradorasLeads,
+      totalPremioLiquidoLeads,
+      comissaoMediaGlobalLeads: comissaoMediaGlobalLeads.toFixed(2),
+      totalRenovacoes,
+      renovados,
+      renovacoesPerdidas,
+      portoSeguroRenovacoes,
+      azulSegurosRenovacoes,
+      itauSegurosRenovacoes,
+      demaisSeguradorasRenovacoes,
+      premioLiquidoRenovados,
+      mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
+      taxaRenovacao: taxaRenovacao.toFixed(2),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, sessionField, JSON.stringify(leads)]);
+  }, [filteredLeads, filteredRenovacoes]);
 
-  const refreshLeadsFromFirestore = async () => {
-    setIsRefreshLoading(true);
-    setDebugMsg('Forçando refresh manual.');
-    setTimeout(() => setIsRefreshLoading(false), 700);
+  const handleAplicarFiltroData = () => {
+    setIsRefreshing(true);
+    setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
   };
 
-  const countFromLeadsPropBySession = (sess) => {
-    try {
-      if (!Array.isArray(leads) || !sess) return 0;
-      const matched = leads.filter((d) => {
-        for (const f of possibleSessionFields) {
-          if (!d) continue;
-          const val = d[f];
-          if (val === undefined) continue;
-          if (String(val) === String(sess)) return true;
-        }
-        return false;
-      });
-      setDebugMsg(`Fallback: contados ${matched.length} leads via prop.`);
-      return matched.length;
-    } catch (err) {
-      console.error('Erro fallback countFromLeadsPropBySession:', err);
-      return 0;
+  const navigateSections = (direction) => {
+    if (direction === 'next') {
+      setCurrentSection('renovacoes');
+    } else {
+      setCurrentSection('segurosNovos');
     }
   };
 
-  const totalLeads = (() => {
-    try {
-      if (Array.isArray(leadsSessionFirestore) && leadsSessionFirestore.length > 0) {
-        const unique = new Set(leadsSessionFirestore.map((l) => String(l.id)));
-        return unique.size;
-      }
-      const sess = resolveSessionId();
-      return countFromLeadsPropBySession(sess);
-    } catch (err) {
-      console.error('Erro ao calcular totalLeads:', err);
-      return 0;
-    }
-  })();
+  // Estilos para o novo design
+  const containerStyle = {
+    padding: '20px',
+    fontFamily: 'Roboto, sans-serif',
+    backgroundColor: '#f4f6f9',
+    minHeight: '100vh',
+  };
 
-  const leadsFechadosCount = Array.isArray(leadsFechados) ? leadsFechados.length : 0;
-  const leadsPerdidos = (Array.isArray(leads) ? leads : []).filter((l) => (l.status ?? l.Status) === 'Perdido').length;
-  const leadsEmContato = (Array.isArray(leads) ? leads : []).filter((l) => (l.status ?? l.Status) === 'Em Contato').length;
-  const leadsSemContato = (Array.isArray(leads) ? leads : []).filter((l) => (l.status ?? l.Status) === 'Sem Contato').length;
+  const headerStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '30px',
+    borderBottom: '1px solid #e0e0e0',
+    paddingBottom: '15px',
+  };
 
-  const boxStyle = { padding: '10px', borderRadius: '6px', flex: 1, color: '#fff', textAlign: 'center' };
+  const titleStyle = {
+    fontSize: '32px',
+    fontWeight: '700',
+    color: '#333',
+    margin: '0',
+  };
+
+  const filterContainerStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginBottom: '30px',
+    flexWrap: 'wrap',
+    backgroundColor: '#fff',
+    padding: '15px',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+  };
+
+  const inputStyle = {
+    padding: '10px 12px',
+    borderRadius: '6px',
+    border: '1px solid #dcdcdc',
+    fontSize: '14px',
+    color: '#555',
+  };
+
+  const buttonStyle = {
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '10px 18px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '600',
+    transition: 'background-color 0.3s ease',
+  };
+
+  const refreshButtonStyle = {
+    backgroundColor: '#6c757d',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '10px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '40px',
+    height: '40px',
+    transition: 'background-color 0.3s ease',
+  };
+
+  const sectionTitleStyle = {
+    fontSize: '26px',
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: '20px',
+    borderBottom: '1px solid #e0e0e0',
+    paddingBottom: '10px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  };
+
+  const cardGridStyle = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', // Ajustado para 160px
+    gap: '15px',
+    marginBottom: '40px',
+  };
+
+  const cardStyle = {
+    backgroundColor: '#ffffff',
+    borderRadius: '10px',
+    padding: '15px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    minHeight: '100px', // Altura mínima para consistência
+    transition: 'transform 0.2s ease-in-out',
+  };
+
+  const cardTitleStyle = {
+    fontSize: '13px', // Reduzido
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: '8px',
+  };
+
+  const cardValueStyle = {
+    fontSize: '22px', // Reduzido
+    fontWeight: '700',
+    color: '#333',
+  };
+
+  const PieChartComponent = ({ percentage, color = '#4CAF50' }) => {
+    const radius = 30;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+    return (
+      <svg width="80" height="80" viewBox="0 0 80 80" style={{ marginTop: '10px' }}>
+        <circle
+          cx="40"
+          cy="40"
+          r={radius}
+          fill="transparent"
+          stroke="#e0e0e0"
+          strokeWidth="8"
+        />
+        <circle
+          cx="40"
+          cy="40"
+          r={radius}
+          fill="transparent"
+          stroke={color}
+          strokeWidth="8"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          transform="rotate(-90 40 40)"
+        />
+        <text x="40" y="45" textAnchor="middle" fontSize="16" fill="#333" fontWeight="bold">
+          {percentage}%
+        </text>
+      </svg>
+    );
+  };
 
   return (
-    <div style={{ padding: '20px' }}>
-      <h1>Dashboard</h1>
-
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
-        <button
-          onClick={refreshLeadsFromFirestore}
-          disabled={isRefreshLoading}
-          style={{
-            backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '6px',
-            padding: '8px 12px', cursor: isRefreshLoading ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: '8px'
-          }}
-          title="Atualizar contadores (forçar refresh)"
-        >
-          {isRefreshLoading ? (
-            <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="3" fill="none" strokeOpacity="0.25" /></svg>
-          ) : (
-            <InlineRefreshIcon size={16} />
+    <div style={containerStyle}>
+      <div style={headerStyle}>
+        <h1 style={titleStyle}>Dashboard</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {currentSection === 'renovacoes' && (
+            <button
+              onClick={() => navigateSections('prev')}
+              style={{ ...refreshButtonStyle, backgroundColor: '#007bff' }}
+              title="Seção Anterior"
+            >
+              <ArrowLeftCircle size={24} />
+            </button>
           )}
-          Atualizar
+          {currentSection === 'segurosNovos' && (
+            <button
+              onClick={() => navigateSections('next')}
+              style={{ ...refreshButtonStyle, backgroundColor: '#007bff' }}
+              title="Próxima Seção"
+            >
+              <ArrowRightCircle size={24} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={filterContainerStyle}>
+        <input
+          type="date"
+          value={dataInicio}
+          onChange={(e) => setDataInicio(e.target.value)}
+          style={inputStyle}
+          title="Data de Início"
+        />
+        <input
+          type="date"
+          value={dataFim}
+          onChange={(e) => setDataFim(e.target.value)}
+          style={inputStyle}
+          title="Data de Fim"
+        />
+        <button
+          onClick={handleAplicarFiltroData}
+          style={buttonStyle}
+        >
+          Filtrar
         </button>
 
-        <div style={{ marginLeft: '8px', color: '#666' }}>
-          {loading ? 'Buscando leads no Firestore...' : 'Dados do Firestore carregados'}
-        </div>
-
-        <div style={{ marginLeft: '12px', color: '#888', fontSize: '12px' }}>{debugMsg}</div>
+        <button
+          title='Atualizando dados...'
+          disabled={isRefreshing || isLoading}
+          style={refreshButtonStyle}
+        >
+          {(isRefreshing || isLoading) ? (
+            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            <RefreshCcw size={20} />
+          )}
+        </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-        <div style={{ ...boxStyle, backgroundColor: '#2d3748' }}>
-          <h3 style={{ margin: 0 }}>Total de Leads (sessão)</h3>
-          <p style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0' }}>{totalLeads}</p>
-          <small style={{ opacity: 0.9 }}>Contagem baseada nos docs da coleção "leads".</small>
+      {isLoading && (
+        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+          <p style={{ fontSize: '18px', color: '#555' }}>Carregando dados do dashboard...</p>
         </div>
+      )}
 
-        <div style={{ ...boxStyle, backgroundColor: '#4caf50' }}>
-          <h3 style={{ margin: 0 }}>Vendas (fechados)</h3>
-          <p style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0' }}>{leadsFechadosCount}</p>
-        </div>
+      {!isLoading && currentSection === 'segurosNovos' && (
+        <>
+          <h2 style={sectionTitleStyle}>Seguros Novos</h2>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f2f7' }}>
+              <h3 style={cardTitleStyle}>Total de Leads</h3>
+              <p style={cardValueStyle}>{dashboardStats.totalLeads}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Vendas</h3>
+              <p style={cardValueStyle}>{dashboardStats.vendas}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffe0b2' }}>
+              <h3 style={cardTitleStyle}>Em Contato</h3>
+              <p style={cardValueStyle}>{dashboardStats.emContato}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffcdd2' }}>
+              <h3 style={cardTitleStyle}>Sem Contato</h3>
+              <p style={cardValueStyle}>{dashboardStats.semContato}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#f3e5f5' }}>
+              <h3 style={cardTitleStyle}>Leads Perdidos</h3>
+              <p style={cardValueStyle}>{dashboardStats.perdidos}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e1f5fe' }}>
+              <h3 style={cardTitleStyle}>Taxa de Conversão</h3>
+              <p style={cardValueStyle}>{dashboardStats.taxaConversaoLeads}%</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f7fa' }}>
+              <h3 style={cardTitleStyle}>Total Prêmio Líquido</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.totalPremioLiquidoLeads.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Média Comissão</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.comissaoMediaGlobalLeads.replace('.', ',')}%
+              </p>
+            </div>
+          </div>
 
-        <div style={{ ...boxStyle, backgroundColor: '#f44336' }}>
-          <h3 style={{ margin: 0 }}>Leads Perdidos</h3>
-          <p style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0' }}>{leadsPerdidos}</p>
-        </div>
+          <h3 style={{ fontSize: '20px', fontWeight: '600', color: '#555', marginBottom: '15px', borderBottom: '1px dashed #e0e0e0', paddingBottom: '8px' }}>Seguradoras (Novos)</h3>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#bbdefb' }}>
+              <h3 style={cardTitleStyle}>Porto Seguro</h3>
+              <p style={cardValueStyle}>{dashboardStats.portoSeguroLeads}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#c8e6c9' }}>
+              <h3 style={cardTitleStyle}>Azul Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.azulSegurosLeads}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffecb3' }}>
+              <h3 style={cardTitleStyle}>Itau Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.itauSegurosLeads}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#f8bbd0' }}>
+              <h3 style={cardTitleStyle}>Demais Seguradoras</h3>
+              <p style={cardValueStyle}>{dashboardStats.demaisSeguradorasLeads}</p>
+            </div>
+          </div>
+        </>
+      )}
 
-        <div style={{ ...boxStyle, backgroundColor: '#ff9800' }}>
-          <h3 style={{ margin: 0 }}>Em Contato</h3>
-          <p style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0' }}>{leadsEmContato}</p>
-        </div>
+      {!isLoading && currentSection === 'renovacoes' && (
+        <>
+          <h2 style={sectionTitleStyle}>Renovações</h2>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e3f2fd' }}>
+              <h3 style={cardTitleStyle}>Total de Renovações</h3>
+              <p style={cardValueStyle}>{dashboardStats.totalRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Renovados</h3>
+              <p style={cardValueStyle}>{dashboardStats.renovados}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffe0b2' }}>
+              <h3 style={cardTitleStyle}>Renovações Perdidas</h3>
+              <p style={cardValueStyle}>{dashboardStats.renovacoesPerdidas}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#fce4ec', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+              <h3 style={cardTitleStyle}>Taxa de Renovação</h3>
+              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} color="#673AB7" />
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f7fa' }}>
+              <h3 style={cardTitleStyle}>Prêmio Líquido Renovados</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.premioLiquidoRenovados.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Média Comissão Renovados</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.mediaComissaoRenovados.replace('.', ',')}%
+              </p>
+            </div>
+          </div>
 
-        <div style={{ ...boxStyle, backgroundColor: '#9e9e9e' }}>
-          <h3 style={{ margin: 0 }}>Sem Contato</h3>
-          <p style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0' }}>{leadsSemContato}</p>
-        </div>
-      </div>
+          <h3 style={{ fontSize: '20px', fontWeight: '600', color: '#555', marginBottom: '15px', borderBottom: '1px dashed #e0e0e0', paddingBottom: '8px' }}>Seguradoras (Renovações)</h3>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#bbdefb' }}>
+              <h3 style={cardTitleStyle}>Porto Seguro</h3>
+              <p style={cardValueStyle}>{dashboardStats.portoSeguroRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#c8e6c9' }}>
+              <h3 style={cardTitleStyle}>Azul Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.azulSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffecb3' }}>
+              <h3 style={cardTitleStyle}>Itau Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.itauSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#f8bbd0' }}>
+              <h3 style={cardTitleStyle}>Demais Seguradoras</h3>
+              <p style={cardValueStyle}>{dashboardStats.demaisSeguradorasRenovacoes}</p>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
