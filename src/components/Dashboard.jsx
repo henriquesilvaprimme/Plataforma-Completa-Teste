@@ -6,9 +6,8 @@ import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle } from 'lucide-react';
 const Dashboard = ({ usuarioLogado }) => {
   const [leadsData, setLeadsData] = useState([]); // Leads do Firebase
   const [renovacoesData, setRenovacoesData] = useState([]); // Renovações do Firebase
-  const [leadsClosedAPI, setLeadsClosedAPI] = useState([]); // Leads fechados da API externa
   const [isLoadingFirebase, setIsLoadingFirebase] = useState(true); // Loading para dados do Firebase
-  const [isLoadingAPI, setIsLoadingAPI] = useState(false); // Loading para dados da API (botão de refresh)
+  const [isRefreshing, setIsRefreshing] = useState(false); // Novo estado para o botão de refresh
   const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
   // Funções para datas
@@ -84,22 +83,6 @@ const Dashboard = ({ usuarioLogado }) => {
     };
   };
 
-  // Busca leads fechados da API externa
-  const buscarLeadsClosedFromAPI = async () => {
-    setIsLoadingAPI(true);
-    try {
-      const respostaLeads = await fetch(
-        'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec?v=pegar_clientes_fechados'
-      );
-      const dadosLeads = await respostaLeads.json();
-      setLeadsClosedAPI(dadosLeads);
-    } catch (error) {
-      console.error('Erro ao buscar leads fechados da API:', error);
-    } finally {
-      setIsLoadingAPI(false);
-    }
-  };
-
   // Listeners para leads e renovações do Firebase
   useEffect(() => {
     const leadsColRef = collection(db, 'leads');
@@ -111,10 +94,12 @@ const Dashboard = ({ usuarioLogado }) => {
         );
         setLeadsData(leadsList);
         setIsLoadingFirebase(false);
+        setIsRefreshing(false); // Desativa o refresh ao carregar
       },
       (error) => {
         console.error('Erro ao buscar leads do Firebase:', error);
         setIsLoadingFirebase(false);
+        setIsRefreshing(false);
       }
     );
 
@@ -131,9 +116,6 @@ const Dashboard = ({ usuarioLogado }) => {
         console.error('Erro ao buscar renovações do Firebase:', error);
       }
     );
-
-    // Chama a busca da API externa na montagem
-    buscarLeadsClosedFromAPI();
 
     return () => {
       unsubscribeLeads();
@@ -222,39 +204,53 @@ const Dashboard = ({ usuarioLogado }) => {
     return filtered;
   }, [renovacoesData, usuarioLogado, filtroAplicado]);
 
-  // Leads fechados da API filtrados por usuário e data
-  const filteredLeadsClosedAPI = useMemo(() => {
-    let filtered = (leadsClosedAPI || []);
-
-    // Filtra por responsável se não for Admin
-    if (!isAdmin) {
-      filtered = filtered.filter((lead) => lead.Responsavel === usuarioLogado.nome);
-    }
-
-    // Filtra por data
-    filtered = filtered.filter((lead) => {
-      const dataLeadStr = getValidDateStr(lead.Data); // Assumindo que a data na API é 'Data'
-      if (!dataLeadStr) return false;
-      if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
-      if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
-      return true;
-    });
-    return filtered;
-  }, [leadsClosedAPI, usuarioLogado, filtroAplicado, isAdmin]);
-
 
   const dashboardStats = useMemo(() => {
     // --- Contadores para Seguros Novos (usando filteredLeadsFirebase) ---
     let totalLeads = filteredLeadsFirebase.length;
-    let vendas = 0; // Vendas agora virão de leadsClosedAPI
+    let vendas = 0;
     let emContato = 0;
     let semContato = 0;
     let agendadosHoje = 0;
     let perdidos = 0;
 
+    let portoSeguroLeads = 0;
+    let azulSegurosLeads = 0;
+    let itauSegurosLeads = 0;
+    let demaisSeguradorasLeads = 0;
+    let totalPremioLiquidoLeads = 0;
+    let somaTotalPercentualComissaoLeads = 0;
+    let totalVendasParaMediaLeads = 0;
+
+    const today = new Date().toLocaleDateString('pt-BR');
+    const demaisSeguradorasLista = [
+      'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
+    ];
+
     filteredLeadsFirebase.forEach((lead) => {
       const s = lead.status ?? '';
-      if (s === 'Em Contato') {
+
+      if (s === 'Fechado') {
+        vendas++;
+        const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
+        if (segNormalized === 'porto seguro') {
+          portoSeguroLeads++;
+        } else if (segNormalized === 'azul seguros') {
+          azulSegurosLeads++;
+        } else if (segNormalized === 'itau seguros') {
+          itauSegurosLeads++;
+        } else if (demaisSeguradorasLista.includes(segNormalized)) {
+          demaisSeguradorasLeads++;
+        }
+
+        const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        totalPremioLiquidoLeads += premio;
+
+        const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
+        somaTotalPercentualComissaoLeads += comissao;
+        totalVendasParaMediaLeads++;
+
+      } else if (s === 'Em Contato') {
         emContato++;
       } else if (s === 'Sem Contato') {
         semContato++;
@@ -265,7 +261,6 @@ const Dashboard = ({ usuarioLogado }) => {
           const statusDateFormatted = new Date(
             `${ano}-${mes}-${dia}T00:00:00`
           ).toLocaleDateString('pt-BR');
-          const today = new Date().toLocaleDateString('pt-BR');
           if (statusDateFormatted === today) {
             agendadosHoje++;
           }
@@ -273,45 +268,6 @@ const Dashboard = ({ usuarioLogado }) => {
       } else if (s === 'Perdido') {
         perdidos++;
       }
-    });
-
-    // --- Contadores para Leads Fechados (usando filteredLeadsClosedAPI) ---
-    const getSegNormalized = (lead) => {
-      return (lead?.Seguradora || '').toString().trim().toLowerCase();
-    };
-
-    const demaisSeguradorasLista = [
-      'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
-    ];
-
-    let portoSeguroLeads = 0;
-    let azulSegurosLeads = 0;
-    let itauSegurosLeads = 0;
-    let demaisSeguradorasLeads = 0;
-    let totalPremioLiquidoLeads = 0;
-    let somaTotalPercentualComissaoLeads = 0;
-    let totalVendasParaMediaLeads = 0;
-
-    filteredLeadsClosedAPI.forEach((lead) => {
-      vendas++; // Cada lead na API de fechados é uma venda
-
-      const segNormalized = getSegNormalized(lead);
-      if (segNormalized === 'porto seguro') {
-        portoSeguroLeads++;
-      } else if (segNormalized === 'azul seguros') {
-        azulSegurosLeads++;
-      } else if (segNormalized === 'itau seguros') {
-        itauSegurosLeads++;
-      } else if (demaisSeguradorasLista.includes(segNormalized)) {
-        demaisSeguradorasLeads++;
-      }
-
-      const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
-      totalPremioLiquidoLeads += premio;
-
-      const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
-      somaTotalPercentualComissaoLeads += comissao;
-      totalVendasParaMediaLeads++;
     });
 
     const taxaConversaoLeads = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
@@ -360,7 +316,7 @@ const Dashboard = ({ usuarioLogado }) => {
 
     return {
       totalLeads,
-      vendas, // Vendas de leadsClosedAPI
+      vendas,
       emContato,
       semContato,
       agendadosHoje,
@@ -383,9 +339,10 @@ const Dashboard = ({ usuarioLogado }) => {
       mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
       taxaRenovacao: taxaRenovacao.toFixed(2),
     };
-  }, [filteredLeadsFirebase, filteredRenovacoesFirebase, filteredLeadsClosedAPI]);
+  }, [filteredLeadsFirebase, filteredRenovacoesFirebase]); // Removido filteredLeadsClosedAPI
 
   const handleAplicarFiltroData = () => {
+    setIsRefreshing(true); // Ativa o refresh ao aplicar filtro
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
   };
 
@@ -597,12 +554,11 @@ const Dashboard = ({ usuarioLogado }) => {
         </button>
 
         <button
-          title='Atualizar dados da API'
-          onClick={buscarLeadsClosedFromAPI}
-          disabled={isLoadingAPI}
+          title='Atualizar dados'
+          disabled={isRefreshing || isLoadingFirebase}
           style={refreshButtonStyle}
         >
-          {isLoadingAPI ? (
+          {(isRefreshing || isLoadingFirebase) ? (
             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
