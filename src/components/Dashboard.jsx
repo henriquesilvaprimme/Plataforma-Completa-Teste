@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
-import { collection, getDocs } from 'firebase/firestore'; // Importar do Firebase
-import { db } from '../firebase'; // Importar a instância do Firestore
+// Não precisamos mais importar do Firebase aqui, pois 'leads' já vem como prop
+// e os leads fechados serão filtrados a partir de 'leads'.
 
-const Dashboard = ({ leads, usuarioLogado }) => {
-  const [leadsClosed, setLeadsClosed] = useState([]);
+const Dashboard = ({ leads, usuarioLogado, fetchLeadsFromFirebase }) => { // Adicionado fetchLeadsFromFirebase como prop
+  // Removido o estado leadsClosed, pois as vendas serão contadas a partir da prop 'leads'
   const [loading, setLoading] = useState(true); // Estado original do Dashboard
   const [isLoading, setIsLoading] = useState(false); // Novo estado para o botão de refresh
 
@@ -24,36 +24,28 @@ const Dashboard = ({ leads, usuarioLogado }) => {
 
   // Função auxiliar para validar e formatar a data
   const getValidDateStr = (dateValue) => {
-    if (!dateValue) return null;
+    if (!dateValue) return false; // Retorna false para valores nulos/indefinidos
     const dateObj = new Date(dateValue);
     if (isNaN(dateObj.getTime())) {
-      return null;
+      // Tenta parsear como dd/mm/yyyy se a primeira tentativa falhar
+      const parts = dateValue.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (parts) {
+        dateObj = new Date(`${parts[3]}-${parts[2]}-${parts[1]}T00:00:00`);
+      } else {
+        return false; // Se ainda for inválido, retorna false
+      }
     }
     return dateObj.toISOString().slice(0, 10);
   };
 
-  // Função para buscar leads fechados do Firebase
-  const fetchLeadsFechadosFromFirebase = async () => {
+  // Função para buscar leads (agora usando a prop fetchLeadsFromFirebase)
+  const handleRefreshLeads = async () => {
     setIsLoading(true); // Ativa o loading do botão
     setLoading(true); // Ativa o loading original do Dashboard
     try {
-      const leadsFechadosCol = collection(db, 'leadsFechados');
-      const leadSnapshot = await getDocs(leadsFechadosCol);
-      const data = leadSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-      const formattedData = data.map(item => ({
-        ...item,
-        insuranceType: item.insuranceType || '',
-        MeioPagamento: item.MeioPagamento || '',
-        CartaoPortoNovo: item.CartaoPortoNovo || '',
-      }));
-      setLeadsClosed(formattedData);
+      await fetchLeadsFromFirebase(); // Chama a função passada via prop
     } catch (error) {
-      console.error('Erro ao buscar leads fechados do Firebase:', error);
-      setLeadsClosed([]);
+      console.error('Erro ao buscar leads:', error);
     } finally {
       setIsLoading(false); // Desativa o loading do botão
       setLoading(false); // Desativa o loading original do Dashboard
@@ -62,7 +54,7 @@ const Dashboard = ({ leads, usuarioLogado }) => {
 
   // refresh automático ao entrar na aba
   useEffect(() => {
-    fetchLeadsFechadosFromFirebase();
+    handleRefreshLeads(); // Chama a função de refresh na montagem
   }, []); // Array de dependências vazia para rodar apenas uma vez na montagem
 
   const aplicarFiltroData = () => {
@@ -71,6 +63,11 @@ const Dashboard = ({ leads, usuarioLogado }) => {
 
   // Filtro por data dos leads gerais (vindos via prop `leads`)
   const leadsFiltradosPorDataGeral = leads.filter((lead) => {
+    // Filtra por responsável primeiro, se não for Admin
+    if (usuarioLogado.tipo !== 'Admin' && lead.responsavel !== usuarioLogado.nome) {
+      return false;
+    }
+
     const dataLeadStr = getValidDateStr(lead.createdAt);
     if (!dataLeadStr) return false;
     if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
@@ -83,24 +80,13 @@ const Dashboard = ({ leads, usuarioLogado }) => {
   const leadsEmContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Em Contato').length;
   const leadsSemContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Sem Contato').length;
 
-  // Filtra leads fechados por responsável (do estado `leadsClosed`)
-  let leadsFiltradosClosed =
-    usuarioLogado.tipo === 'Admin'
-      ? leadsClosed
-      : leadsClosed.filter((lead) => lead.Responsavel === usuarioLogado.nome);
-
-  // Filtro de data nos leads fechados
-  leadsFiltradosClosed = leadsFiltradosClosed.filter((lead) => {
-    const dataLeadStr = getValidDateStr(lead.Data);
-    if (!dataLeadStr) return false;
-    if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
-    if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
-    return true;
-  });
+  // --- NOVA LÓGICA PARA LEADS FECHADOS (VENDAS) ---
+  // Agora, leadsFechados são filtrados diretamente de leadsFiltradosPorDataGeral
+  let leadsFechadosParaVendas = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Fechado');
 
   // Normalização helper para o campo Seguradora (trim + lowercase)
   const getSegNormalized = (lead) => {
-    return (lead?.Seguradora || '').toString().trim().toLowerCase();
+    return (lead?.insurer || '').toString().trim().toLowerCase(); // Usar 'insurer' do lead geral
   };
 
   // Lista de seguradoras que devem ser contadas como "Demais Seguradoras"
@@ -119,41 +105,36 @@ const Dashboard = ({ leads, usuarioLogado }) => {
   ];
 
   // Contadores por seguradora (comparação normalizada)
-  const portoSeguro = leadsFiltradosClosed.filter((lead) => getSegNormalized(lead) === 'porto seguro').length;
-  const azulSeguros = leadsFiltradosClosed.filter((lead) => getSegNormalized(lead) === 'azul seguros').length;
-  const itauSeguros = leadsFiltradosClosed.filter((lead) => getSegNormalized(lead) === 'itau seguros').length;
+  const portoSeguro = leadsFechadosParaVendas.filter((lead) => getSegNormalized(lead) === 'porto seguro').length;
+  const azulSeguros = leadsFechadosParaVendas.filter((lead) => getSegNormalized(lead) === 'azul seguros').length;
+  const itauSeguros = leadsFechadosParaVendas.filter((lead) => getSegNormalized(lead) === 'itau seguros').length;
 
   // Agora 'demais' conta qualquer lead cuja seguradora esteja na lista acima (case-insensitive)
-  const demais = leadsFiltradosClosed.filter((lead) => demaisSeguradorasLista.includes(getSegNormalized(lead))).length;
+  const demais = leadsFechadosParaVendas.filter((lead) => demaisSeguradorasLista.includes(getSegNormalized(lead))).length;
 
   // O campo Vendas soma os contadores das seguradoras
   const leadsFechadosCount = portoSeguro + azulSeguros + itauSeguros + demais;
 
-  // CÁLCULO DA TAXA DE CONVERSÃO (Nova lógica)
+  // CÁLCULO DA TAXA DE CONVERSÃO
   const taxaConversao =
     totalLeads > 0
-      ? Math.round((leadsFechadosCount / totalLeads) * 100) // Calcula, multiplica por 100 e arredonda
+      ? Math.round((leadsFechadosCount / totalLeads) * 100)
       : 0;
 
   // Soma de prêmio líquido
-  const totalPremioLiquido = leadsFiltradosClosed.reduce(
-    (acc, lead) => acc + (Number(lead.PremioLiquido) || 0),
+  const totalPremioLiquido = leadsFechadosParaVendas.reduce(
+    (acc, lead) => acc + (Number(lead.premioLiquido) || 0), // Usar 'premioLiquido' do lead geral
     0
   );
 
-  // --- CÁLCULO DA MÉDIA COMISSÃO (AJUSTADO CONFORME SOLICITADO) ---
-  // Lógica: Total de percentual de comissao dividido pelo numero total de Vendas.
-
-  // 1. Soma total dos percentuais de comissão
-  const somaTotalPercentualComissao = leadsFiltradosClosed.reduce(
-    (acc, lead) => acc + (Number(lead.Comissao) || 0),
+  // --- CÁLCULO DA MÉDIA COMISSÃO ---
+  const somaTotalPercentualComissao = leadsFechadosParaVendas.reduce(
+    (acc, lead) => acc + (Number(lead.comissao) || 0), // Usar 'comissao' do lead geral
     0
   );
 
-  // 2. Número total de vendas (igual a leadsFiltradosClosed.length)
-  const totalVendasParaMedia = leadsFiltradosClosed.length;
+  const totalVendasParaMedia = leadsFechadosParaVendas.length;
 
-  // 3. Média Comissão: Total Percentual / Total Vendas
   const comissaoMediaGlobal =
     totalVendasParaMedia > 0 ? somaTotalPercentualComissao / totalVendasParaMedia : 0;
   // --- FIM CÁLCULO AJUSTADO ---
@@ -221,7 +202,7 @@ const Dashboard = ({ leads, usuarioLogado }) => {
         {/* Botão de Refresh */}
         <button
           title='Clique para atualizar os dados'
-          onClick={fetchLeadsFechadosFromFirebase} // Chama a função que busca e atualiza os leads fechados do Firebase
+          onClick={handleRefreshLeads} // Chama a função de refresh que usa a prop
           disabled={isLoading}
           style={{
             backgroundColor: '#6c757d', // Cor cinza para o botão de refresh
