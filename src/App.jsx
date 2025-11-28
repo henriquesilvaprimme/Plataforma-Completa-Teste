@@ -13,6 +13,10 @@ import CriarUsuario from './pages/CriarUsuario';
 import GerenciarUsuarios from './pages/GerenciarUsuarios';
 import Ranking from './pages/Ranking';
 import CriarLead from './pages/CriarLead';
+// Importar os novos componentes com os caminhos corretos
+import Renovacoes from './Renovacoes'; // Caminho ajustado para src
+import Renovados from './Renovados';   // Caminho ajustado para src
+import Segurados from './pages/Segurados';   // Mantido em pages
 
 function ScrollToTop({ scrollContainerRef }) {
   const { pathname } = useLocation();
@@ -29,11 +33,9 @@ function ScrollToTop({ scrollContainerRef }) {
   return null;
 }
 
-// ======= CONFIGURAÇÃO DE SINCRONIZAÇÃO LOCAL (mantida, mas adaptada para Firebase) =======
 const LOCAL_CHANGES_KEY = 'leads_local_changes_v1';
 const SYNC_DELAY_MS = 5 * 60 * 1000; // 5 minutos
 const SYNC_CHECK_INTERVAL_MS = 1000; // checa a cada 1s
-// =========================================================================================
 
 function App() {
   const navigate = useNavigate();
@@ -62,7 +64,6 @@ function App() {
     img.onload = () => setBackgroundLoaded(true);
   }, []);
 
-  // ------------------ Helpers de localChanges ------------------
   const loadLocalChangesFromStorage = () => {
     try {
       const raw = localStorage.getItem(LOCAL_CHANGES_KEY);
@@ -92,7 +93,6 @@ function App() {
     persistLocalChangesToStorage();
   };
 
-  // ------------------ FETCH USUÁRIOS (Firebase) ------------------
   const fetchUsuariosForLogin = async () => {
     try {
       const usuariosCol = collection(db, 'usuarios');
@@ -165,7 +165,6 @@ function App() {
     }
   };
 
-  // ------------------ FETCH LEADS (Firebase com merge de localChanges) ------------------
   const applyLocalChangesToFetched = (fetchedLeads) => {
     const now = Date.now();
     const merged = fetchedLeads.map(lead => {
@@ -269,7 +268,6 @@ function App() {
     }
   }, [leadSelecionado, isEditing]);
 
-  // ------------------ LEADS FECHADOS (Firebase) -------------
   const fetchLeadsFechadosFromFirebase = async () => {
     try {
       const leadsFechadosCol = collection(db, 'leadsFechados');
@@ -614,7 +612,7 @@ function App() {
         if (!change) continue;
 
         try {
-          const docRef = doc(db, 'leads', change.id); // Assumindo que 'leads' é a coleção principal
+          const docRef = doc(db, 'leads', change.id);
           await updateDoc(docRef, change.data);
 
           delete localChangesRef.current[key];
@@ -775,7 +773,7 @@ function App() {
                 leads={isAdmin ? leads : leads.filter((lead) => lead.responsavel === usuarioLogado.nome)}
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
+                fetchLeadsFromSheet={fetchLeadsFromFirebase}
                 transferirLead={transferirLead}
                 usuarioLogado={usuarioLogado}
                 leadSelecionado={leadSelecionado}
@@ -784,7 +782,7 @@ function App() {
                 onConfirmAgendamento={handleConfirmAgendamento}
                 salvarObservacao={salvarObservacao}
                 saveLocalChange={saveLocalChange}
-                forceSyncWithSheets={forceSyncWithFirebase} // Alterado para Firebase
+                forceSyncWithSheets={forceSyncWithFirebase}
               />
             }
           />
@@ -797,7 +795,7 @@ function App() {
                 onUpdateInsurer={atualizarSeguradoraLead}
                 onConfirmInsurer={confirmarSeguradoraLead}
                 onUpdateDetalhes={atualizarDetalhesLeadFechado}
-                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // Alterado para Firebase
+                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
                 isAdmin={isAdmin}
                 ultimoFechadoId={ultimoFechadoId}
                 onAbrirLead={onAbrirLead}
@@ -815,7 +813,7 @@ function App() {
               <LeadsPerdidos
                 leads={isAdmin ? leads.filter((lead) => lead.status === 'Perdido') : leads.filter((lead) => lead.responsavel === usuarioLogado.nome && lead.status === 'Perdido')}
                 usuarios={usuarios}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
+                fetchLeadsFromSheet={fetchLeadsFromFirebase}
                 onAbrirLead={onAbrirLead}
                 isAdmin={isAdmin}
                 leadSelecionado={leadSelecionado}
@@ -825,13 +823,50 @@ function App() {
           />
           <Route path="/buscar-lead" element={<BuscarLead
             leads={leads}
-            fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
-            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // Alterado para Firebase
+            fetchLeadsFromSheet={fetchLeadsFromFirebase}
+            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
             setIsEditing={setIsEditing}
           />} />
           <Route
             path="/criar-lead"
             element={<CriarLead adicionarLead={adicionarNovoLead} />}
+          />
+          {/* Rotas para Renovações, Renovados e Segurados */}
+          <Route
+            path="/renovacoes"
+            element={
+              <Renovacoes
+                leads={isAdmin ? leads : leads.filter((lead) => lead.responsavel === usuarioLogado.nome)}
+                usuarios={usuarios}
+                fetchLeadsFromFirebase={fetchLeadsFromFirebase}
+                usuarioLogado={usuarioLogado}
+                setIsEditing={setIsEditing}
+              />
+            }
+          />
+          <Route
+            path="/renovados"
+            element={
+              <Renovados
+                leadsFechados={isAdmin ? leadsFechados : leadsFechados.filter((lead) => lead.Responsavel === usuarioLogado.nome)}
+                usuarios={usuarios}
+                fetchLeadsFechadosFromFirebase={fetchLeadsFechadosFromFirebase}
+                usuarioLogado={usuarioLogado}
+                setIsEditing={setIsEditing}
+              />
+            }
+          />
+          <Route
+            path="/segurados"
+            element={
+              <Segurados
+                leadsFechados={isAdmin ? leadsFechados : leadsFechados.filter((lead) => lead.Responsavel === usuarioLogado.nome)}
+                usuarios={usuarios}
+                fetchLeadsFechadosFromFirebase={fetchLeadsFechadosFromFirebase}
+                usuarioLogado={usuarioLogado}
+                setIsEditing={setIsEditing}
+              />
+            }
           />
           {isAdmin && (
             <>
@@ -844,8 +879,8 @@ function App() {
           )}
           <Route path="/ranking" element={<Ranking
             usuarios={usuarios}
-            fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
-            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // Alterado para Firebase
+            fetchLeadsFromSheet={fetchLeadsFromFirebase}
+            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
             leads={leads} />} />
           <Route path="*" element={<h1 style={{ padding: 20 }}>Página não encontrada</h1>} />
         </Routes>
