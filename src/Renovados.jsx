@@ -136,21 +136,18 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     useEffect(() => {
         let renovadosParaFiltrar = [...allRenovados]; // Começa com TODOS os renovados
 
-        // AJUSTE AQUI: Filtragem para usuários não-admin
-        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
-            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
-            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
-                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
-                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
-            });
-        }
-        // AJUSTE AQUI: Filtragem para usuários não-admin
-        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
-            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
-            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
-                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
-                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
-            });
+        // Filtragem por Responsável: apenas para usuários que NÃO são admin
+        if (!isAdmin) {
+            if (usuarioLogado && usuarioLogado.nome) {
+                const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
+                renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
+                    const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
+                    return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
+                });
+            } else {
+                // Se não tivermos info do usuário logado, não mostramos nenhum lead para evitar exposição indevida
+                renovadosParaFiltrar = [];
+            }
         }
 
         // 1. Filtragem por Data (Local)
