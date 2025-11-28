@@ -110,7 +110,9 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
 
   // Filtro de data nos leads fechados
   leadsFiltradosClosed = (leadsFiltradosClosed || []).filter((lead) => {
-    const dataLeadStr = getValidDateStr(lead.Data ?? lead.createdAt ?? lead.DataFechamento ?? lead.Data || null);
+    // CORREÇÃO: não misturar '||' com '??' — escolhemos uma sequência de nullish-coalescing
+    const possibleDate = lead.Data ?? lead.createdAt ?? lead.DataFechamento ?? null;
+    const dataLeadStr = getValidDateStr(possibleDate);
     if (!dataLeadStr) return false;
     if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
     if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
