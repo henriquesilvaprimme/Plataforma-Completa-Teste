@@ -53,7 +53,6 @@ function App() {
 
   const [usuarios, setUsuarios] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
-  const [leadsCount, setLeadsCount] = useState(0);
   const [ultimoFechadoId, setUltimoFechadoId] = useState(null);
 
   // Referência em memória das alterações locais (evita leituras/desescritas excessivas)
@@ -843,6 +842,8 @@ function App() {
               <Dashboard
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
+                leads={leads}
+                leadsFechados={leadsFechados}
               />
             }
           />
