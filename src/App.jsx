@@ -14,7 +14,6 @@ import Ranking from './pages/Ranking';
 import CriarLead from './pages/CriarLead';
 import Renovacoes from './Renovacoes';
 import Renovados from './Renovados'; // Importação do componente Renovados
-import Segurados from './pages/Segurados';
 
 import { db } from './firebase';
 import { collection, getDocs, onSnapshot, query, orderBy } from 'firebase/firestore';
@@ -917,19 +916,6 @@ function App() {
                 salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovados
                 saveLocalChange={saveLocalChange}
                 forceSyncWithSheets={forceSyncWithSheets}
-              />
-            }
-          />
-          {/* Rota para Segurados */}
-          <Route
-            path="/segurados"
-            element={
-              <Segurados
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de segurados
-                usuarios={usuarios}
-                usuarioLogado={usuarioLogado}
-                setIsEditing={setIsEditing}
-                scrollContainerRef={mainContentRef}
               />
             }
           />
