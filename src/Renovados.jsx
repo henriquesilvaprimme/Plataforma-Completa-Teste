@@ -136,14 +136,15 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     useEffect(() => {
         let renovadosParaFiltrar = [...allRenovados]; // Começa com TODOS os renovados
 
-        // AJUSTE AQUI: Filtragem para usuários não-admin
-        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
-            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
-            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
-                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
-                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
-            });
-        }
+        // Se o usuário não for admin, filtra os leads para mostrar apenas os que ele é responsável
+        // Essa filtragem agora é feita no App.jsx antes de passar os leads para este componente.
+        // if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
+        //     const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
+        //     renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
+        //         const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
+        //         return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
+        //     });
+        // }
 
         // 1. Filtragem por Data (Local)
         if (filtroData) {
@@ -602,7 +603,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
                         const requiresCartaoPortoNovo = seguradorasComCartaoPortoNovo.includes(currentInsurer) && currentMeioPagamento === 'CP';
 
                         // Condição de validação para Cartão Porto Novo
-                        const cartaoPortoNovoInvalido = requiresCartaoPortoNovo && (!cartaoPortoNovo[`${lead.id}`] || cartaoPortoNovo[`${lead.id}`] === ''); // CORRIGIDO AQUI
+                        const cartaoPortoNovoInvalido = requiresCartaoPortoNovo && (!cartaoPortoNovo[`${lead.id}`] || cartaoPortoNovo[`${lead.id}`] === '');
                         
                         // Lógica de desativação do botão de confirmação
                         const isButtonDisabled =
