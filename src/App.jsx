@@ -905,17 +905,12 @@ function App() {
               <Renovados
                 leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovados
                 usuarios={usuarios}
-                onUpdateStatus={atualizarStatusLead} // Pode ser necessário uma função específica para renovados
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Pode ser necessário uma função específica para renovados
-                transferirLead={transferirLead} // Pode ser necessário uma função específica para renovados
-                usuarioLogado={usuarioLogado}
-                leadSelecionado={leadSelecionado}
+                onUpdateInsurer={atualizarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
+                onConfirmInsurer={confirmarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
+                onUpdateDetalhes={atualizarDetalhesLeadFechado} // Usando a função de LeadsFechados, se aplicável
+                usuarioLogado={usuarioLogado} // <--- AQUI ESTÁ O AJUSTE PRINCIPAL
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
-                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovados
-                salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovados
-                saveLocalChange={saveLocalChange}
-                forceSyncWithSheets={forceSyncWithSheets}
               />
             }
           />
@@ -942,7 +937,7 @@ function App() {
                 ultimoFechadoId={ultimoFechadoId}
                 onAbrirLead={onAbrirLead}
                 leadSelecionado={leadSelecionado}
-                formatarDataParaExibicao={formatarDataParaExibicao}
+                formatarDataParaExibicao={formatarDataParaDDMMYYYY}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
                 onLeadNameUpdate={handleLeadFechadoNameUpdate}
