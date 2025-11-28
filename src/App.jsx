@@ -315,7 +315,7 @@ function App() {
       if (partesHifen) {
         dateObj = new Date(dataString + 'T00:00:00');
       } else if (partesBarra) {
-        dateObj = new Date(`${partesBarra[3]}-${partesBar[2]}-${partesBar[1]}T00:00:00`);
+        dateObj = new Date(`${partesBarra[3]}-${partesBarra[2]}-${partesBarra[1]}T00:00:00`);
       } else {
         dateObj = new Date(dataString);
       }
@@ -911,6 +911,7 @@ function App() {
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
+                isAdmin={isAdmin}
               />
             }
           />
