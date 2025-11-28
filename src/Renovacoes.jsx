@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import LeadRenovacoes from './components/LeadRenovacoes';
 import { RefreshCcw, Bell, Search, Send, Edit, Save, User, ChevronLeft, ChevronRight, CheckCircle, DollarSign, Calendar } from 'lucide-react';
-import { collection, onSnapshot, doc, updateDoc, query, orderBy, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, query, orderBy, serverTimestamp, setDoc, addDoc } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
 
 // ===============================================
@@ -11,7 +11,7 @@ const getYearMonthFromDate = (dateValue) => {
     if (!dateValue) return '';
 
     let date;
-    
+
     if (typeof dateValue === 'string' && dateValue.includes('/')) {
         const parts = dateValue.split('/');
         date = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
@@ -23,14 +23,14 @@ const getYearMonthFromDate = (dateValue) => {
     else {
         date = new Date(dateValue);
     }
-    
+
     if (isNaN(date.getTime())) {
         return '';
     }
 
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
-    
+
     return `${year}-${month}`;
 };
 
@@ -56,16 +56,16 @@ const StatusFilterButton = ({ status, count, currentFilter, onClick, isScheduled
     } else {
         statusColors = 'bg-gray-200 text-gray-700 hover:bg-gray-300';
     }
-    
+
     const label = isScheduledToday ? `Agendados` : status;
-    
+
     return (
         <button
             onClick={() => onClick(status)}
             className={`${baseClasses} ${statusColors} ${isSelected ? activeClasses : nonActiveClasses}`}
             disabled={status !== 'Todos' && status !== 'Agendado' && count === 0}
         >
-            {label} 
+            {label}
             {status !== 'Todos' && (
                 <span className="ml-2 px-2 py-0.5 text-xs font-bold bg-white bg-opacity-30 rounded-full">{count}</span>
             )}
@@ -84,7 +84,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
     const [isLoading, setIsLoading] = useState(false);
     const [observacoes, setObservacoes] = useState({});
     const [isEditingObservacao, setIsEditingObservacao] = useState({});
-    
+
     // --- MODIFICAÇÃO AQUI: Inicializa dataInput e filtroData com o mês e ano atuais ---
     const today = new Date();
     const currentYearMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
@@ -97,7 +97,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
     const [filtroStatus, setFiltroStatus] = useState('Todos');
     const [hasScheduledToday, setHasScheduledToday] = useState(false);
     const [showNotification, setShowNotification] = useState(false);
-    
+
     // NOVOS STATES: modal de fechamento
     const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
     const [closingLead, setClosingLead] = useState(null);
@@ -113,7 +113,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
     const [modalVigenciaInicial, setModalVigenciaInicial] = useState('');
     const [modalVigenciaFinal, setModalVigenciaFinal] = useState('');
     const [isSubmittingClose, setIsSubmittingClose] = useState(false);
-    
+
     // NOVO ESTADO: Armazena o responsável recém-atribuído localmente (Lógica Otimista)
     const [responsavelLocal, setResponsavelLocal] = useState({});
 
@@ -183,7 +183,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                 const initialObservacoes = {};
                 const initialIsEditingObservacao = {};
                 const initialResponsavelLocal = {};
-                
+
                 lista.forEach(lead => {
                     initialObservacoes[lead.id] = lead.observacao || '';
                     initialIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
@@ -248,7 +248,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
 
     const leadsPorPagina = 10;
     const normalizarTexto = (texto = '') => {
-        return texto.toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,\/#!$%\^&\*;:{}=\-_`~()@\+\?><\[\]\+]/g, '').replace(/\s+/g, ' ').trim();
+        return texto.toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,\/#!$%^&*;:{}=\-_`~()@+\?><\[\]+]/g, '', '').replace(/\s+/g, ' ').trim();
     };
 
     const aplicarFiltroData = () => {
@@ -261,12 +261,12 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         setFiltroNome(filtroLimpo);
         setFiltroData(''); setDataInput(''); setFiltroStatus('Todos'); setPaginaAtual(1);
     };
-    
+
     const aplicarFiltroStatus = (status) => {
         setFiltroStatus(status);
         setPaginaAtual(1);
     };
-    
+
     const nomeContemFiltro = (leadNome, filtroNome) => {
         if (!filtroNome) return true;
         if (!leadNome) return false;
@@ -274,7 +274,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         const filtroNormalizado = normalizarTexto(filtroNome);
         return nomeNormalizado.includes(filtroNormalizado);
     };
-    
+
     /**
      * Função auxiliar para converter a data do formato dd/mm/aaaa ou aaaa-mm-dd em um objeto Date.
      * Retorna um objeto Date válido ou null se for inválido.
@@ -294,7 +294,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         } else {
             date = new Date(dateStr);
         }
-        
+
         return isNaN(date.getTime()) ? null : date;
     };
 
@@ -315,7 +315,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             if (filtroNome && !nomeContemFiltro(lead.Nome, filtroNome)) {
                 return false;
             }
-            
+
             // 2. FILTRO DE DATA (registeredAt)
             if (filtroData) {
                 const leadRegisteredMesAno = getYearMonthFromDate(lead.registeredAt);
@@ -340,7 +340,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             }
 
 
-            return true; 
+            return true;
         });
 
         // LÓGICA DE ORDENAÇÃO POR registeredAt (Crescente)
@@ -353,7 +353,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             // Datas inválidas ou nulas vão para o final
             if (!dateA) return 1;
             if (!dateB) return -1;
-            
+
             // Ordem Crescente: a - b (datas mais antigas primeiro)
             return dateA.getTime() - dateB.getTime();
         });
@@ -381,7 +381,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                        const [dia, mes, ano] = statusDateStr.split('/');
                        const statusDate = new Date(`${ano}-${mes}-${dia}T00:00:00`);
                        const statusDateFormatted = statusDate.toLocaleDateString('pt-BR');
-                       
+
                        if (statusDateFormatted === todayFormatted) {
                             counts['Agendado']++;
                        }
@@ -389,7 +389,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         });
         return counts;
     }, [leadsData]); // Alterado para leadsData
-    
+
     // --- Lógica de Paginação ---
     const totalPaginas = Math.max(1, Math.ceil(gerais.length / leadsPorPagina));
     const paginaCorrigida = Math.min(paginaAtual, totalPaginas);
@@ -434,7 +434,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             console.error('Erro ao enviar lead atualizado para Firebase:', error);
         }
     };
-    
+
     // FUNÇÃO PRINCIPAL CORRIGIDA PARA LÓGICA OTIMISTA
     const handleEnviar = (leadId) => {
         const userId = selecionados[leadId];
@@ -446,22 +446,22 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         const lead = leadsData.find((l) => l.id === leadId); // Alterado para leadsData
         if (!lead) return;
 
-        const usuarioSelecionado = usuarios.find(u => String(u.id) === String(userId)); 
+        const usuarioSelecionado = usuarios.find(u => String(u.id) === String(userId));
         if (!usuarioSelecionado) {
             alert('Erro: Usuário selecionado não encontrado.');
             return;
         }
-        
+
         const novoResponsavelNome = usuarioSelecionado.nome;
 
         // 1. ATUALIZAÇÃO VISUAL NO ESTADO PAI (IMEDIATA)
         // Isso força o componente pai a atualizar o array 'leads', alterando o campo 'responsavel'
-        transferirLead(leadId, novoResponsavelNome); 
-        
+        transferirLead(leadId, novoResponsavelNome);
+
         // 2. ATUALIZAÇÃO VISUAL NO ESTADO LOCAL (Backup e imediatez)
         // Garante que o nome correto será exibido logo de cara
         setResponsavelLocal(prev => ({ ...prev, [leadId]: novoResponsavelNome }));
-        
+
         // 3. Limpa o select
         // Isso faz com que a condição de renderização abaixo mude para o bloco "Atribuído a: Nome"
         setSelecionados(prev => {
@@ -478,7 +478,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         // Coloca o lead no modo de seleção (exibe o select)
         setSelecionados((prev) => ({ ...prev, [leadId]: '' }));
     };
-    
+
     // Função para obter o nome do responsável (Prioriza o estado local otimista)
     const getResponsavelDisplay = (lead) => {
         // 1. Prioriza o nome no estado local (para a mudança otimista)
@@ -488,7 +488,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
         // 2. Volta para o nome vindo do estado global (props)
         return lead.responsavel;
     };
-    
+
     // --- Outras Funções (Mantidas) ---
 
     const formatarData = (dataStr) => {
@@ -649,12 +649,15 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
             const vigIniISO = modalVigenciaInicial ? new Date(`${modalVigenciaInicial}T00:00:00`).toISOString() : '';
             const vigFinISO = modalVigenciaFinal ? new Date(`${modalVigenciaFinal}T00:00:00`).toISOString() : '';
 
-            // --- NOVO: grava também em 'renovacoes' (mesmo payload, mesmo doc id) ---
+            // --- NOVO: grava também em 'renovacoes' (mesmo payload, mas com novo ID) ---
             try {
-                const renovRef = doc(db, 'renovacoes', leadId);
+                const renovacoesCollectionRef = collection(db, 'renovacoes');
+                const newRenovDocRef = doc(renovacoesCollectionRef); // Gera um novo ID para o documento
+                const newLeadId = newRenovDocRef.id;
+
                 const renovPayload = {
-                    ID: closingLead.ID ?? closingLead.id ?? leadId,
-                    id: leadId,
+                    ID: newLeadId,
+                    id: newLeadId,
                     Nome: modalNome,
                     name: modalNome,
                     Modelo: closingLead.Modelo ?? closingLead.vehicleModel ?? '',
@@ -679,7 +682,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                     closedAt: serverTimestamp(),
                     registeredAt: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString(), // Data atual + 1 ano
                 };
-                await setDoc(renovRef, renovPayload);
+                await setDoc(newRenovDocRef, renovPayload);
             } catch (errRenov) {
                 console.error('Erro ao gravar em renovacoes:', errRenov);
                 // não interrompe o fluxo principal; só registra o erro
@@ -741,7 +744,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
     // --- Renderização do Layout ---
     return (
         <div className="p-4 md:p-6 lg:p-8 relative min-h-screen bg-gray-100 font-sans">
-            
+
             {/* Overlay de Loading */}
             {isLoading && (
                 <div className="fixed inset-0 bg-white bg-opacity-80 flex justify-center items-center z-50">
@@ -762,7 +765,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                         <Bell size={32} className="text-indigo-500 mr-3" />
                         Renovações
                     </h1>
-                    
+
                     {/* Sino de Notificação */}
                     {hasScheduledToday && (
                         <div
@@ -781,7 +784,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                             )}
                         </div>
                     )}
-                    
+
                     <button
                         title="Atualizar dados"
                         onClick={handleRefreshLeads}
@@ -791,7 +794,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                         <RefreshCcw size={24} className={isLoading ? '' : 'hover:rotate-180'} />
                     </button>
                 </div>
-                
+
                 {/* Controles de Filtro */}
                 <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch">
                     {/* Filtro de Nome */}
@@ -803,7 +806,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                             onChange={(e) => setNomeInput(e.target.value)}
                             className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                         />
-                        <button 
+                        <button
                             onClick={aplicarFiltroNome}
                             className="p-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition duration-200 shadow-md"
                         >
@@ -820,7 +823,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                             className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm"
                             title="Filtrar por Mês/Ano da Data de Registro"
                         />
-                        <button 
+                        <button
                             onClick={aplicarFiltroData}
                             className="p-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition duration-200 shadow-md whitespace-nowrap"
                         >
@@ -829,34 +832,34 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                     </div>
                 </div>
             </div>
-            
+
             {/* Barra de Filtro de Status */}
             <div className="flex flex-wrap gap-3 justify-center mb-8">
-                <StatusFilterButton 
-                    status="Todos" 
-                    count={gerais.length} 
-                    currentFilter={filtroStatus} 
-                    onClick={aplicarFiltroStatus} 
+                <StatusFilterButton
+                    status="Todos"
+                    count={gerais.length}
+                    currentFilter={filtroStatus}
+                    onClick={aplicarFiltroStatus}
                 />
-                <StatusFilterButton 
-                    status="Em Contato" 
-                    count={statusCounts['Em Contato']} 
-                    currentFilter={filtroStatus} 
-                    onClick={aplicarFiltroStatus} 
+                <StatusFilterButton
+                    status="Em Contato"
+                    count={statusCounts['Em Contato']}
+                    currentFilter={filtroStatus}
+                    onClick={aplicarFiltroStatus}
                 />
-                <StatusFilterButton 
-                    status="Sem Contato" 
-                    count={statusCounts['Sem Contato']} 
-                    currentFilter={filtroStatus} 
-                    onClick={aplicarFiltroStatus} 
+                <StatusFilterButton
+                    status="Sem Contato"
+                    count={statusCounts['Sem Contato']}
+                    currentFilter={filtroStatus}
+                    onClick={aplicarFiltroStatus}
                 />
-                {statusCounts['Agendado'] > 0 && 
-                    <StatusFilterButton 
-                        status="Agendado" 
-                        count={statusCounts['Agendado']} 
-                        currentFilter={filtroStatus} 
-                        onClick={aplicarFiltroStatus} 
-                        isScheduledToday={true} 
+                {statusCounts['Agendado'] > 0 &&
+                    <StatusFilterButton
+                        status="Agendado"
+                        count={statusCounts['Agendado']}
+                        currentFilter={filtroStatus}
+                        onClick={aplicarFiltroStatus}
+                        isScheduledToday={true}
                     />
                 }
             </div>
@@ -870,13 +873,13 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                 ) : (
                     leadsPagina.map((lead) => {
                         const shouldShowObs = lead.status === 'Em Contato' || lead.status === 'Sem Contato' || lead.status.startsWith('Agendado');
-                        
+
                         // Obtém o nome do responsável (priorizando a mudança otimista)
                         const responsavelNome = getResponsavelDisplay(lead);
                         const isAtribuido = responsavelNome && responsavelNome !== 'null';
 
                         return (
-                            <div 
+                            <div
                                 key={lead.id}
                                 className="bg-white rounded-xl shadow-lg hover:shadow-xl transition duration-300 p-5 grid grid-cols-1 lg:grid-cols-3 gap-6 relative border-t-4 border-indigo-500"
                             >
@@ -887,12 +890,12 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                             {getFullStatus(lead.status)}
                                         </span>
                                     </div>
-                                    <LeadRenovacoes 
-                                        lead={lead} 
-                                        onUpdateStatus={handleConfirmStatus} 
-                                        disabledConfirm={!isAtribuido} 
+                                    <LeadRenovacoes
+                                        lead={lead}
+                                        onUpdateStatus={handleConfirmStatus}
+                                        disabledConfirm={!isAtribuido}
                                         // AQUI ESTÁ A CORREÇÃO: Passando a prop isAdmin
-                                        isAdmin={isAdmin} 
+                                        isAdmin={isAdmin}
                                         compact={false}
                                     />
                                     {/* Linha de Vigência Final */}
@@ -900,7 +903,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                         <p className="text-sm font-semibold text-gray-700">
                                             Vigência Final: <strong className="text-indigo-600">{formatarData(lead.VigenciaFinal)}</strong>
                                         </p>
-                                        
+
                                     </div>
                                     <p className="mt-1 text-xs text-gray-400">
                                         Registrado em: {formatarData(lead.registeredAt)}
@@ -913,7 +916,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                         <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg shadow-sm">
                                             <textarea
                                                 value={observacoes[lead.id] || ''}
-                                                onChange={(e) => handleObservacaoChange(lead.id, e.target.value)} 
+                                                onChange={(e) => handleObservacaoChange(lead.id, e.target.value)}
                                                 rows="4"
                                                 placeholder="Adicione suas observações aqui..."
                                                 disabled={!isEditingObservacao[lead.id]}
@@ -947,7 +950,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                         <User size={18} className="mr-2 text-indigo-500" />
                                         Atribuição
                                     </h3>
-                                    
+
                                     {/* Condição: Se está atribuído E NÃO está no modo de seleção */}
                                     {isAtribuido && !selecionados[lead.id] ? (
                                         <div className="p-3 bg-green-50 border border-green-200 rounded-lg shadow-sm">
@@ -1018,7 +1021,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl">
                         <h2 className="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">Concluir Venda: {closingLead.Nome}</h2>
-                        
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">Nome do Cliente</label>
@@ -1098,7 +1101,7 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                 Cancelar
                             </button>
                             <button onClick={handleConcluirVenda} disabled={isSubmittingClose} className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition duration-150 disabled:opacity-50">
-                                {isSubmittingClose ? 'Concluíndo...' : 'Concluir Venda'}
+                                {isSubmittingClose ? 'Concluindo...' : 'Concluir Venda'}
                             </button>
                         </div>
                     </div>
