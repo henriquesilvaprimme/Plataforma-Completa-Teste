@@ -822,6 +822,8 @@ function App() {
             element={
               <Dashboard
                 usuarioLogado={usuarioLogado}
+                leads={leads}           /* <--- CORREÇÃO APLICADA AQUI */
+                renovacoes={leads}      /* <--- CORREÇÃO APLICADA AQUI */
               />
             }
           />
