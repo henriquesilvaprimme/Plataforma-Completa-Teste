@@ -9,6 +9,7 @@ import { collection, getDocs, onSnapshot, query, orderBy, where, Timestamp } fro
 
 const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, scrollContainerRef }) => {
     // --- ESTADOS ---
+    const [allRenovados, setAllRenovados] = useState([]); // AJUSTE AQUI: Novo estado para armazenar TODOS os renovados
     const [renovadosFiltradosInterno, setRenovadosFiltradosInterno] = useState([]);
     const [paginaAtual, setPaginaAtual] = useState(1);
     const leadsPorPagina = 10;
@@ -33,10 +34,10 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     const [filtroData, setFiltroData] = useState(getMesAnoAtual());
     const [premioLiquidoInputDisplay, setPremioLiquidoInputDisplay] = useState({});
 
-    // --- FUNÇÕES DE LÓGICA (CORRIGIDA) ---
+    // --- FUNÇÕES DE LÓGICA ---
     
     /**
-     * AJUSTE AQUI: Função unificada para parsear registeredAt para um objeto Date.
+     * Função unificada para parsear registeredAt para um objeto Date.
      * Lida com Timestamp e string DD/MM/AAAA.
      * @param {Timestamp|string} registeredAtValue - Valor do campo registeredAt
      * @returns {Date|null} Objeto Date ou null se não puder ser parseado
@@ -84,95 +85,98 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     const aplicarFiltroNome = () => {
         const filtroLimpo = nomeInput.trim();
         setFiltroNome(filtroLimpo);
-        setFiltroData('');
-        setDataInput('');
+        setFiltroData(''); // Limpa o filtro de data ao aplicar o de nome
+        setDataInput(''); // Limpa o input de data
         setPaginaAtual(1);
         scrollToTop();
     };
 
     const aplicarFiltroData = () => {
         setFiltroData(dataInput); // dataInput está no formato AAAA-MM
-        setFiltroNome('');
-        setNomeInput('');
+        setFiltroNome(''); // Limpa o filtro de nome ao aplicar o de data
+        setNomeInput(''); // Limpa o input de nome
         setPaginaAtual(1);
         scrollToTop();
     };
 
-    // --- FUNÇÃO PARA BUSCAR LEADS RENOVADOS DO FIRESTORE ---
-    const fetchRenovadosFromFirebase = async () => {
+    // --- FUNÇÃO PARA BUSCAR TODOS OS LEADS RENOVADOS COM STATUS 'FECHADO' DO FIRESTORE ---
+    const fetchAllRenovadosFromFirebase = async () => { // AJUSTE AQUI: Nova função para buscar TUDO
         setIsLoading(true);
         try {
-            let q;
-            if (filtroData) {
-                const [year, month] = filtroData.split('-').map(Number);
-                // AJUSTE AQUI: Criando as datas de início e fim do mês para a consulta do Firestore
-                const startDate = new Date(year, month - 1, 1);
-                const endDate = new Date(year, month, 0, 23, 59, 59, 999); // Último milissegundo do mês
-
-                q = query(
-                    collection(db, 'renovados'),
-                    where('Status', '==', 'Fechado'), // Filtro de Status
-                    where('registeredAt', '>=', Timestamp.fromDate(startDate)),
-                    where('registeredAt', '<=', Timestamp.fromDate(endDate)),
-                    orderBy('registeredAt', 'desc')
-                );
-            } else {
-                // Se não houver filtro de data, busca todos os "Fechado"
-                q = query(
-                    collection(db, 'renovados'),
-                    where('Status', '==', 'Fechado'),
-                    orderBy('registeredAt', 'desc')
-                );
-            }
+            const q = query(
+                collection(db, 'renovados'),
+                where('Status', '==', 'Fechado'),
+                orderBy('registeredAt', 'desc') // Mantém a ordenação para consistência
+            );
 
             const querySnapshot = await getDocs(q);
-            let renovadosData = querySnapshot.docs.map(doc => ({
+            const renovadosData = querySnapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
-
-            // AJUSTE AQUI: Filtro local adicional para garantir que o registeredAt esteja no formato correto
-            // e para lidar com casos onde o Firestore não pode filtrar por string de data diretamente.
-            if (filtroData) {
-                const [filterYear, filterMonth] = filtroData.split('-').map(Number);
-                renovadosData = renovadosData.filter(lead => {
-                    const registeredDate = parseRegisteredAtToDate(lead.registeredAt);
-                    if (registeredDate) {
-                        return registeredDate.getFullYear() === filterYear &&
-                               registeredDate.getMonth() === (filterMonth - 1);
-                    }
-                    return false; // Se não conseguir parsear, não inclui
-                });
-            }
-
-            setRenovadosFiltradosInterno(renovadosData);
+            setAllRenovados(renovadosData); // Armazena todos os renovados no novo estado
         } catch (error) {
-            console.error('Erro ao buscar leads renovados do Firebase:', error);
+            console.error('Erro ao buscar todos os leads renovados do Firebase:', error);
         } finally {
             setIsLoading(false);
         }
     };
 
     const handleRefresh = async () => {
-        await fetchRenovadosFromFirebase();
+        await fetchAllRenovadosFromFirebase(); // AJUSTE AQUI: Chama a nova função de busca
     };
 
     // --- EFEITO DE CARREGAMENTO INICIAL ---
     useEffect(() => {
-        fetchRenovadosFromFirebase();
+        fetchAllRenovadosFromFirebase(); // AJUSTE AQUI: Carrega todos os renovados na montagem
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filtroData]); // Adicionado filtroData como dependência para re-executar o useEffect quando o filtro mudar
-    
-    // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS ---
+    }, []); // Sem dependências para rodar apenas uma vez na montagem
+
+    // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS (AGORA COM FILTRAGEM LOCAL) ---
     useEffect(() => {
-        let renovadosAtuais = renovadosFiltradosInterno; // Já estamos buscando apenas renovados
+        let renovadosParaFiltrar = [...allRenovados]; // AJUSTE AQUI: Começa com TODOS os renovados
+
+        // 1. Filtragem por Data (Local)
+        if (filtroData) {
+            const [filterYear, filterMonth] = filtroData.split('-').map(Number);
+            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
+                const registeredDate = parseRegisteredAtToDate(lead.registeredAt);
+                if (registeredDate) {
+                    return registeredDate.getFullYear() === filterYear &&
+                           registeredDate.getMonth() === (filterMonth - 1);
+                }
+                return false;
+            });
+        }
+
+        // 2. Filtragem por Nome (Local)
+        if (filtroNome) {
+            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead =>
+                nomeContemFiltro(lead.name, filtroNome)
+            );
+        }
+
+        // 3. Ordenação (Local)
+        const renovadosOrdenados = [...renovadosParaFiltrar].sort((a, b) => {
+            const dateA = parseRegisteredAtToDate(a.registeredAt);
+            const dateB = parseRegisteredAtToDate(b.registeredAt);
+
+            if (dateA && dateB) {
+                return dateB.getTime() - dateA.getTime();
+            }
+            if (dateA) return -1;
+            if (dateB) return 1;
+            return 0;
+        });
+
+        setRenovadosFiltradosInterno(renovadosOrdenados);
 
         // --------------------------------------------------------------------------------
-        // Sincronização de estados (Gerais)
+        // Sincronização de estados (Gerais) - Mantida
         // --------------------------------------------------------------------------------
         setValores(prevValores => {
             const novosValores = { ...prevValores };
-            renovadosAtuais.forEach(lead => {
+            renovadosOrdenados.forEach(lead => { // AJUSTE AQUI: Usa renovadosOrdenados para sincronizar
                 const rawPremioFromApi = String(lead.PremioLiquido || '');
                 const premioFromApi = parseFloat(rawPremioFromApi.replace('.', '').replace(',', '.'));
                 const premioInCents = isNaN(premioFromApi) || rawPremioFromApi === '' ? null : Math.round(premioFromApi * 100);
@@ -206,7 +210,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
         // SINCRONIZAÇÃO NOVOS ESTADOS: Meio de Pagamento
         setMeioPagamento(prevMeioPagamento => {
             const novosMeios = { ...prevMeioPagamento };
-            renovadosAtuais.forEach(lead => {
+            renovadosOrdenados.forEach(lead => { // AJUSTE AQUI: Usa renovadosOrdenados para sincronizar
                 const apiMeioPagamento = lead.MeioPagamento || '';
                 if (!novosMeios[lead.id] || (apiMeioPagamento !== '' && prevMeioPagamento[lead.id] === undefined)) {
                     novosMeios[lead.id] = apiMeioPagamento;
@@ -218,7 +222,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
         // SINCRONIZAÇÃO NOVOS ESTADOS: Cartão Porto Seguro novo
         setCartaoPortoNovo(prevCartaoPortoNovo => {
             const novosCartoes = { ...prevCartaoPortoNovo };
-            renovadosAtuais.forEach(lead => {
+            renovadosOrdenados.forEach(lead => { // AJUSTE AQUI: Usa renovadosOrdenados para sincronizar
                 const apiCartaoPortoNovo = lead.CartaoPortoNovo || '';
                 if (!novosCartoes[lead.id] || (apiCartaoPortoNovo !== '' && prevCartaoPortoNovo[lead.id] === undefined)) {
                     novosCartoes[lead.id] = apiCartaoPortoNovo;
@@ -230,7 +234,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
         // Sincronização de estados (Display e Vigência) - Mantida
         setPremioLiquidoInputDisplay(prevDisplay => {
             const newDisplay = { ...prevDisplay };
-            renovadosAtuais.forEach(lead => {
+            renovadosOrdenados.forEach(lead => { // AJUSTE AQUI: Usa renovadosOrdenados para sincronizar
                 const currentPremio = String(lead.PremioLiquido || '');
                 if (currentPremio !== '') {
                     const premioFloat = parseFloat(currentPremio.replace(',', '.'));
@@ -244,7 +248,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
 
         setVigencia(prevVigencia => {
             const novasVigencias = { ...prevVigencia };
-            renovadosAtuais.forEach(lead => {
+            renovadosOrdenados.forEach(lead => { // AJUSTE AQUI: Usa renovadosOrdenados para sincronizar
                 const vigenciaInicioStrApi = String(lead.VigenciaInicial || '');
                 const vigenciaFinalStrApi = String(lead.VigenciaFinal || '');
 
@@ -265,32 +269,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
         });
         // --------------------------------------------------------------------------------
 
-        // AJUSTE AQUI: Usando a função unificada para parsear registeredAt para ordenação
-        const renovadosOrdenados = [...renovadosAtuais].sort((a, b) => {
-            const dateA = parseRegisteredAtToDate(a.registeredAt);
-            const dateB = parseRegisteredAtToDate(b.registeredAt);
-
-            if (dateA && dateB) {
-                return dateB.getTime() - dateA.getTime();
-            }
-            if (dateA) return -1; // A vem antes se B não tem data válida
-            if (dateB) return 1;  // B vem antes se A não tem data válida
-            return 0;
-        });
-
-        // Aplicação da lógica de filtragem (CORRIGIDA)
-        let leadsFiltrados;
-        if (filtroNome) {
-            leadsFiltrados = renovadosOrdenados.filter(lead =>
-                nomeContemFiltro(lead.name, filtroNome)
-            );
-        } else {
-            leadsFiltrados = renovadosOrdenados;
-        }
-
-        setRenovadosFiltradosInterno(leadsFiltrados);
-    }, [filtroNome, renovadosFiltradosInterno]); // Removido filtroData das dependências, pois já é tratado no useEffect
-    // O `renovadosFiltradosInterno` foi adicionado como dependência para que o filtro de nome seja aplicado sobre os dados já filtrados por data.
+    }, [allRenovados, filtroNome, filtroData]); // AJUSTE AQUI: Dependências atualizadas para o novo fluxo de filtragem local
 
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
@@ -572,7 +551,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
                         const requiresCartaoPortoNovo = seguradorasComCartaoPortoNovo.includes(currentInsurer) && currentMeioPagamento === 'CP';
 
                         // Condição de validação para Cartão Porto Novo
-                        const cartaoPortoNovoInvalido = requiresCartaoPortoNovo && (!cartaoPortoNovo[`${lead.id}`] || cartaoPortaoNovo[`${lead.id}`] === '');
+                        const cartaoPortoNovoInvalido = requiresCartaoPortoNovo && (!cartaoPortoNovo[`${lead.id}`] || cartaoPortoNovo[`${lead.id}`] === '');
                         
                         // Lógica de desativação do botão de confirmação
                         const isButtonDisabled =
@@ -782,7 +761,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
                                                     cartaoPortoNovo[`${lead.id}`] 
                                                 );
                                                 // Note: Esta chamada é crucial para o seu fluxo de atualização pós-confirmação
-                                                await fetchRenovadosFromFirebase(); // Atualiza a lista após a confirmação
+                                                await fetchAllRenovadosFromFirebase(); // AJUSTE AQUI: Atualiza a lista após a confirmação
                                             }}
                                             disabled={isButtonDisabled || isLoading}
                                             className={`flex items-center justify-center w-full px-4 py-3 text-lg font-semibold rounded-lg shadow-md transition duration-200 ${
