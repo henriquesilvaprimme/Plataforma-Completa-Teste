@@ -751,11 +751,7 @@ function App() {
             path="/dashboard"
             element={
               <Dashboard
-                leadsClosed={
-                  isAdmin
-                    ? leadsFechados
-                    : leadsFechados.filter((lead) => lead.Responsavel === usuarioLogado.nome)
-                }
+                // leadsClosed removido, pois o Dashboard agora filtra de 'leads'
                 leads={
                   isAdmin
                     ? leads
@@ -763,6 +759,7 @@ function App() {
                 }
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
+                fetchLeadsFromFirebase={fetchLeadsFromFirebase} // Passando a função como prop
               />
             }
           />
