@@ -13,7 +13,7 @@ import GerenciarUsuarios from './pages/GerenciarUsuarios';
 import Ranking from './pages/Ranking';
 import CriarLead from './pages/CriarLead';
 import Renovacoes from './Renovacoes';
-import Renovados from './Renovados';
+import Renovados from './Renovados'; // Importação do componente Renovados
 import Segurados from './pages/Segurados';
 
 import { db } from './firebase';
@@ -375,7 +375,7 @@ function App() {
       // Ordena por closedAt (se disponível) ou por createdAt
       fechados.sort((a, b) => {
         const ta = a.closedAt ? (a.closedAt.seconds ? a.closedAt.seconds * 1000 : new Date(a.closedAt).getTime()) : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-        const tb = b.closedAt ? (b.closedAt.seconds ? b.closedAt.seconds * 1000 : new Date(b.closedAt).getTime()) : (b.createdAt ? new Date(b.closedAt).getTime() : 0);
+        const tb = b.closedAt ? (b.closedAt.seconds ? b.closedAt.seconds * 1000 : new Date(b.closedAt).getTime()) : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         return tb - ta;
       });
       setLeadsFechados(fechados);
@@ -894,6 +894,27 @@ function App() {
                 scrollContainerRef={mainContentRef}
                 onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovações
                 salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovações
+                saveLocalChange={saveLocalChange}
+                forceSyncWithSheets={forceSyncWithSheets}
+              />
+            }
+          />
+          {/* Rota para Renovados */}
+          <Route
+            path="/renovados"
+            element={
+              <Renovados
+                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovados
+                usuarios={usuarios}
+                onUpdateStatus={atualizarStatusLead} // Pode ser necessário uma função específica para renovados
+                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Pode ser necessário uma função específica para renovados
+                transferirLead={transferirLead} // Pode ser necessário uma função específica para renovados
+                usuarioLogado={usuarioLogado}
+                leadSelecionado={leadSelecionado}
+                setIsEditing={setIsEditing}
+                scrollContainerRef={mainContentRef}
+                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovados
+                salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovados
                 saveLocalChange={saveLocalChange}
                 forceSyncWithSheets={forceSyncWithSheets}
               />
