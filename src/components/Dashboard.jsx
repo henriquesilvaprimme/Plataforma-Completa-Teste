@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
 import { collection, getDocs } from 'firebase/firestore'; // Importar do Firebase
-import { db } from './firebase'; // Importar a instância do Firestore
+import { db } from '../firebase'; // Importar a instância do Firestore
 
 const Dashboard = ({ leads, usuarioLogado }) => {
   const [leadsClosed, setLeadsClosed] = useState([]);
