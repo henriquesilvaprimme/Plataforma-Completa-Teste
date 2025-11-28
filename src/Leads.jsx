@@ -54,17 +54,23 @@ const Leads = ({
   const normalizeLead = (docId, data = {}) => {
     const safe = (v) => (v === undefined || v === null ? '' : v);
 
-    const toISO = (v) => {
-      if (!v && v !== 0) return '';
-      if (typeof v === 'object' && typeof v.toDate === 'function') {
-        return v.toDate().toISOString();
+    // AJUSTE CRÍTICO AQUI: createdAt - Não converte para ISO se já for DD/MM/AAAA
+    const getCreatedAt = (val) => {
+      if (!val) return '';
+      if (typeof val === 'string' && val.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+        return val; // Já está no formato DD/MM/AAAA
       }
-      if (typeof v === 'string') return v;
+      if (typeof val === 'object' && typeof val.toDate === 'function') {
+        return formatDDMMYYYY(val); // Converte Timestamp para DD/MM/AAAA
+      }
       try {
-        return new Date(v).toISOString();
-      } catch {
-        return '';
-      }
+        // Tenta converter outras strings para Date e depois para DD/MM/AAAA
+        const d = new Date(val);
+        if (!isNaN(d.getTime())) {
+          return formatDDMMYYYY(d);
+        }
+      } catch {}
+      return '';
     };
 
     // Nome
@@ -149,7 +155,8 @@ const Leads = ({
       parcelamento: data.parcelamento ?? data.Parcelamento ?? '',
       VigenciaFinal: data.VigenciaFinal ?? data.vigenciaFinal ?? '',
       VigenciaInicial: data.VigenciaInicial ?? data.vigenciaInicial ?? '',
-      createdAt: toISO(data.createdAt ?? data.data ?? data.Data ?? data.criadoEm), // Adicionado data.criadoEm
+      // AJUSTE CRÍTICO AQUI: createdAt - Usa a função auxiliar
+      createdAt: getCreatedAt(data.createdAt ?? data.data ?? data.Data ?? data.criadoEm),
       responsavel: data.responsavel ?? data.Responsavel ?? '',
       editado: data.editado ?? '',
       observacao: data.observacao ?? data.Observacao ?? '',
@@ -168,6 +175,10 @@ const Leads = ({
   const formatDDMMYYYYFromISO = (isoOrString) => {
     if (!isoOrString) return '';
     try {
+      // AJUSTE CRÍTICO AQUI: Se já for DD/MM/AAAA, retorna direto
+      if (typeof isoOrString === 'string' && isoOrString.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+        return isoOrString;
+      }
       if (typeof isoOrString === 'object' && typeof isoOrString.toDate === 'function') {
         const d = isoOrString.toDate();
         return d.toLocaleDateString('pt-BR');
@@ -186,7 +197,12 @@ const Leads = ({
   // NOVA FUNÇÃO: Formata um objeto Date para "DD/MM/AAAA"
   const formatDDMMYYYY = (date) => {
     if (!date) return '';
-    const d = date instanceof Date ? date : date.toDate(); // Converte Timestamp para Date
+    let d = date;
+    if (typeof date.toDate === 'function') { // Se for um Timestamp do Firebase
+        d = date.toDate();
+    } else if (!(date instanceof Date)) { // Se não for Date nem Timestamp, tenta converter
+        d = new Date(date);
+    }
     if (isNaN(d.getTime())) return '';
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -197,7 +213,12 @@ const Leads = ({
   // NOVA FUNÇÃO: Formata um objeto Date para "DD/MM/AAAA HH:MM"
   const formatDDMMYYYYHHMM = (date) => {
     if (!date) return '';
-    const d = date instanceof Date ? date : date.toDate(); // Converte Timestamp para Date
+    let d = date;
+    if (typeof date.toDate === 'function') { // Se for um Timestamp do Firebase
+        d = date.toDate();
+    } else if (!(date instanceof Date)) { // Se não for Date nem Timestamp, tenta converter
+        d = new Date(date);
+    }
     if (isNaN(d.getTime())) return '';
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -219,8 +240,9 @@ const Leads = ({
 
           // Ordena localmente por createdAt (se existir)
           lista.sort((a, b) => {
-            const da = a.createdAt ? new Date(a.createdAt) : new Date(0);
-            const dbb = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            // AJUSTE CRÍTICO AQUI: createdAt - Converte para Date para ordenação
+            const da = a.createdAt ? new Date(a.createdAt.split('/').reverse().join('-')) : new Date(0);
+            const dbb = b.createdAt ? new Date(b.createdAt.split('/').reverse().join('-')) : new Date(0);
             return dbb - da;
           });
 
@@ -266,8 +288,9 @@ const Leads = ({
       });
 
       lista.sort((a, b) => {
-        const da = a.createdAt ? new Date(a.createdAt) : new Date(0);
-        const dbb = b.createdAt ? new Date(b.createdAt) : new Date(0);
+        // AJUSTE CRÍTICO AQUI: createdAt - Converte para Date para ordenação
+        const da = a.createdAt ? new Date(a.createdAt.split('/').reverse().join('-')) : new Date(0);
+        const dbb = b.createdAt ? new Date(b.createdAt.split('/').reverse().join('-')) : new Date(0);
         return dbb - da;
       });
 
@@ -440,7 +463,9 @@ const Leads = ({
     if (!leadDateStr) return false; // Lead sem data de criação
 
     try {
-      const leadDate = new Date(leadDateStr);
+      // AJUSTE CRÍTICO AQUI: createdAt - Converte a string DD/MM/AAAA para Date para comparação
+      const [dia, mes, ano] = leadDateStr.split('/');
+      const leadDate = new Date(`${ano}-${mes}-${dia}T00:00:00`);
       const [filtroAno, filtroMes] = filtroMesAno.split('-').map(Number);
 
       return leadDate.getFullYear() === filtroAno && (leadDate.getMonth() + 1) === filtroMes;
@@ -1200,7 +1225,7 @@ const Leads = ({
                             </div>
                           )}
                         </div>
-                      </div>
+                      )}
 
                       {hasObservacaoSection && (
                         <div className="lg:border-l lg:border-gray-200 lg:pl-6 space-y-3">
@@ -1242,9 +1267,9 @@ const Leads = ({
 
                   <div
                     className="absolute bottom-2 right-4 text-xs text-gray-400 italic"
-                    title={`Criado em: ${formatDDMMYYYYFromISO(lead.createdAt)}`}
+                    title={`Criado em: ${lead.createdAt}`} // AJUSTE CRÍTICO AQUI: Exibe diretamente a string
                   >
-                    Criado em: {formatDDMMYYYYFromISO(lead.createdAt)}
+                    Criado em: {lead.createdAt} {/* AJUSTE CRÍTICO AQUI: Exibe diretamente a string */}
                   </div>
                 </div>
               );
