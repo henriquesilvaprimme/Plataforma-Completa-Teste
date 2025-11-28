@@ -34,6 +34,27 @@ const getYearMonthFromDate = (dateValue) => {
     return `${year}-${month}`;
 };
 
+// ===============================================
+// FUNÇÃO AUXILIAR: Formata ISO -> DD/MM/YYYY
+// ===============================================
+const formatDDMMYYYYFromISO = (isoOrString) => {
+    if (!isoOrString) return '';
+    try {
+      if (typeof isoOrString === 'object' && typeof isoOrString.toDate === 'function') {
+        const d = isoOrString.toDate();
+        return d.toLocaleDateString('pt-BR');
+      }
+      const d = new Date(isoOrString);
+      if (isNaN(d.getTime())) return '';
+      const dia = String(d.getDate()).padStart(2, '0');
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const ano = d.getFullYear();
+      return `${dia}/${mes}/${ano}`;
+    } catch {
+      return '';
+    }
+};
+
 
 // ===============================================
 // COMPONENTE AUXILIAR: StatusButton com Contagem
