@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat } from 'lucide-react';
+import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle } from 'lucide-react';
 
 const Dashboard = ({ usuarioLogado }) => {
-  const [leadsData, setLeadsData] = useState([]);
-  const [renovacoesData, setRenovacoesData] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [leadsData, setLeadsData] = useState([]); // Leads do Firebase
+  const [renovacoesData, setRenovacoesData] = useState([]); // Renovações do Firebase
+  const [leadsClosedAPI, setLeadsClosedAPI] = useState([]); // Leads fechados da API externa
+  const [isLoadingFirebase, setIsLoadingFirebase] = useState(true); // Loading para dados do Firebase
+  const [isLoadingAPI, setIsLoadingAPI] = useState(false); // Loading para dados da API (botão de refresh)
   const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
+  // Funções para datas
   const getPrimeiroDiaMes = () => {
     const hoje = new Date();
     return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
@@ -23,9 +25,36 @@ const Dashboard = ({ usuarioLogado }) => {
   const [dataFim, setDataFim] = useState(getDataHoje());
   const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  const normalizeLead = (docId, data = {}) => {
-    const safe = (v) => (v === undefined || v === null ? '' : v);
+  // Função auxiliar para validar e formatar a data
+  const getValidDateStr = (dateValue) => {
+    if (!dateValue) return null;
+    try {
+      let dateObj;
+      // Tenta parsear como ISO string primeiro
+      if (typeof dateValue === 'string' && dateValue.includes('T')) {
+        dateObj = new Date(dateValue);
+      } else {
+        // Tenta parsear como data sem hora (YYYY-MM-DD)
+        const parts = String(dateValue).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (parts) {
+          dateObj = new Date(parseInt(parts[1]), parseInt(parts[2]) - 1, parseInt(parts[3]));
+        } else {
+          dateObj = new Date(dateValue);
+        }
+      }
 
+      if (isNaN(dateObj.getTime())) {
+        return null;
+      }
+      return dateObj.toISOString().slice(0, 10);
+    } catch (e) {
+      console.warn("Erro ao formatar data:", dateValue, e);
+      return null;
+    }
+  };
+
+  // Normaliza lead para garantir campos básicos
+  const normalizeLead = (docId, data = {}) => {
     const toISO = (v) => {
       if (!v && v !== 0) return '';
       if (typeof v === 'object' && typeof v.toDate === 'function') {
@@ -55,6 +84,23 @@ const Dashboard = ({ usuarioLogado }) => {
     };
   };
 
+  // Busca leads fechados da API externa
+  const buscarLeadsClosedFromAPI = async () => {
+    setIsLoadingAPI(true);
+    try {
+      const respostaLeads = await fetch(
+        'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec?v=pegar_clientes_fechados'
+      );
+      const dadosLeads = await respostaLeads.json();
+      setLeadsClosedAPI(dadosLeads);
+    } catch (error) {
+      console.error('Erro ao buscar leads fechados da API:', error);
+    } finally {
+      setIsLoadingAPI(false);
+    }
+  };
+
+  // Listeners para leads e renovações do Firebase
   useEffect(() => {
     const leadsColRef = collection(db, 'leads');
     const unsubscribeLeads = onSnapshot(
@@ -64,13 +110,11 @@ const Dashboard = ({ usuarioLogado }) => {
           normalizeLead(doc.id, doc.data())
         );
         setLeadsData(leadsList);
-        setIsLoading(false);
-        setIsRefreshing(false);
+        setIsLoadingFirebase(false);
       },
       (error) => {
-        console.error('Erro ao buscar leads:', error);
-        setIsLoading(false);
-        setIsRefreshing(false);
+        console.error('Erro ao buscar leads do Firebase:', error);
+        setIsLoadingFirebase(false);
       }
     );
 
@@ -84,9 +128,12 @@ const Dashboard = ({ usuarioLogado }) => {
         setRenovacoesData(renovacoesList);
       },
       (error) => {
-        console.error('Erro ao buscar renovações:', error);
+        console.error('Erro ao buscar renovações do Firebase:', error);
       }
     );
+
+    // Chama a busca da API externa na montagem
+    buscarLeadsClosedFromAPI();
 
     return () => {
       unsubscribeLeads();
@@ -147,21 +194,8 @@ const Dashboard = ({ usuarioLogado }) => {
     return parts.length > 1 ? parts[1] : null;
   };
 
-  const getValidDateStr = (dateValue) => {
-    if (!dateValue) return null;
-    try {
-      const dateObj = new Date(dateValue);
-      if (isNaN(dateObj.getTime())) {
-        return null;
-      }
-      return dateObj.toISOString().slice(0, 10);
-    } catch (e) {
-      return null;
-    }
-  };
-
-  const filteredLeads = useMemo(() => {
-    // Garante que leadsData é um array antes de chamar filter
+  // Leads do Firebase filtrados por usuário e data
+  const filteredLeadsFirebase = useMemo(() => {
     let filtered = (leadsData || []).filter((lead) => canViewLead(lead));
 
     filtered = filtered.filter((lead) => {
@@ -171,12 +205,11 @@ const Dashboard = ({ usuarioLogado }) => {
       if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
       return true;
     });
-
     return filtered;
   }, [leadsData, usuarioLogado, filtroAplicado]);
 
-  const filteredRenovacoes = useMemo(() => {
-    // Garante que renovacoesData é um array antes de chamar filter
+  // Renovações do Firebase filtradas por usuário e data
+  const filteredRenovacoesFirebase = useMemo(() => {
     let filtered = (renovacoesData || []).filter((renovacao) => canViewLead(renovacao));
 
     filtered = filtered.filter((renovacao) => {
@@ -186,66 +219,42 @@ const Dashboard = ({ usuarioLogado }) => {
       if (filtroAplicado.fim && dataRenovacaoStr > filtroAplicado.fim) return false;
       return true;
     });
-
     return filtered;
   }, [renovacoesData, usuarioLogado, filtroAplicado]);
 
+  // Leads fechados da API filtrados por usuário e data
+  const filteredLeadsClosedAPI = useMemo(() => {
+    let filtered = (leadsClosedAPI || []);
+
+    // Filtra por responsável se não for Admin
+    if (!isAdmin) {
+      filtered = filtered.filter((lead) => lead.Responsavel === usuarioLogado.nome);
+    }
+
+    // Filtra por data
+    filtered = filtered.filter((lead) => {
+      const dataLeadStr = getValidDateStr(lead.Data); // Assumindo que a data na API é 'Data'
+      if (!dataLeadStr) return false;
+      if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
+      if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
+      return true;
+    });
+    return filtered;
+  }, [leadsClosedAPI, usuarioLogado, filtroAplicado, isAdmin]);
+
+
   const dashboardStats = useMemo(() => {
-    let totalLeads = filteredLeads.length;
-    let vendas = 0;
+    // --- Contadores para Seguros Novos (usando filteredLeadsFirebase) ---
+    let totalLeads = filteredLeadsFirebase.length;
+    let vendas = 0; // Vendas agora virão de leadsClosedAPI
     let emContato = 0;
     let semContato = 0;
     let agendadosHoje = 0;
     let perdidos = 0;
 
-    let portoSeguroLeads = 0;
-    let azulSegurosLeads = 0;
-    let itauSegurosLeads = 0;
-    let demaisSeguradorasLeads = 0;
-    let totalPremioLiquidoLeads = 0;
-    let somaTotalPercentualComissaoLeads = 0;
-    let totalVendasParaMediaLeads = 0;
-
-    let totalRenovacoes = filteredRenovacoes.length;
-    let renovados = 0;
-    let renovacoesPerdidas = 0;
-    let portoSeguroRenovacoes = 0;
-    let azulSegurosRenovacoes = 0;
-    let itauSegurosRenovacoes = 0;
-    let demaisSeguradorasRenovacoes = 0;
-    let premioLiquidoRenovados = 0;
-    let somaComissaoRenovados = 0;
-    let totalRenovadosParaMedia = 0;
-
-    const today = new Date().toLocaleDateString('pt-BR');
-    const demaisSeguradorasLista = [
-      'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
-    ];
-
-    filteredLeads.forEach((lead) => {
+    filteredLeadsFirebase.forEach((lead) => {
       const s = lead.status ?? '';
-
-      if (s === 'Fechado') {
-        vendas++;
-        const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
-        if (segNormalized === 'porto seguro') {
-          portoSeguroLeads++;
-        } else if (segNormalized === 'azul seguros') {
-          azulSegurosLeads++;
-        } else if (segNormalized === 'itau seguros') {
-          itauSegurosLeads++;
-        } else if (demaisSeguradorasLista.includes(segNormalized)) {
-          demaisSeguradorasLeads++;
-        }
-
-        const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
-        totalPremioLiquidoLeads += premio;
-
-        const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
-        somaTotalPercentualComissaoLeads += comissao;
-        totalVendasParaMediaLeads++;
-
-      } else if (s === 'Em Contato') {
+      if (s === 'Em Contato') {
         emContato++;
       } else if (s === 'Sem Contato') {
         semContato++;
@@ -256,6 +265,7 @@ const Dashboard = ({ usuarioLogado }) => {
           const statusDateFormatted = new Date(
             `${ano}-${mes}-${dia}T00:00:00`
           ).toLocaleDateString('pt-BR');
+          const today = new Date().toLocaleDateString('pt-BR');
           if (statusDateFormatted === today) {
             agendadosHoje++;
           }
@@ -265,7 +275,61 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     });
 
-    filteredRenovacoes.forEach((renovacao) => {
+    // --- Contadores para Leads Fechados (usando filteredLeadsClosedAPI) ---
+    const getSegNormalized = (lead) => {
+      return (lead?.Seguradora || '').toString().trim().toLowerCase();
+    };
+
+    const demaisSeguradorasLista = [
+      'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
+    ];
+
+    let portoSeguroLeads = 0;
+    let azulSegurosLeads = 0;
+    let itauSegurosLeads = 0;
+    let demaisSeguradorasLeads = 0;
+    let totalPremioLiquidoLeads = 0;
+    let somaTotalPercentualComissaoLeads = 0;
+    let totalVendasParaMediaLeads = 0;
+
+    filteredLeadsClosedAPI.forEach((lead) => {
+      vendas++; // Cada lead na API de fechados é uma venda
+
+      const segNormalized = getSegNormalized(lead);
+      if (segNormalized === 'porto seguro') {
+        portoSeguroLeads++;
+      } else if (segNormalized === 'azul seguros') {
+        azulSegurosLeads++;
+      } else if (segNormalized === 'itau seguros') {
+        itauSegurosLeads++;
+      } else if (demaisSeguradorasLista.includes(segNormalized)) {
+        demaisSeguradorasLeads++;
+      }
+
+      const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+      totalPremioLiquidoLeads += premio;
+
+      const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
+      somaTotalPercentualComissaoLeads += comissao;
+      totalVendasParaMediaLeads++;
+    });
+
+    const taxaConversaoLeads = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
+    const comissaoMediaGlobalLeads = totalVendasParaMediaLeads > 0 ? somaTotalPercentualComissaoLeads / totalVendasParaMediaLeads : 0;
+
+    // --- Contadores para Renovações (usando filteredRenovacoesFirebase) ---
+    let totalRenovacoes = filteredRenovacoesFirebase.length;
+    let renovados = 0;
+    let renovacoesPerdidas = 0;
+    let portoSeguroRenovacoes = 0;
+    let azulSegurosRenovacoes = 0;
+    let itauSegurosRenovacoes = 0;
+    let demaisSeguradorasRenovacoes = 0;
+    let premioLiquidoRenovados = 0;
+    let somaComissaoRenovados = 0;
+    let totalRenovadosParaMedia = 0;
+
+    filteredRenovacoesFirebase.forEach((renovacao) => {
       const s = renovacao.status ?? '';
 
       if (s === 'Renovado') {
@@ -291,14 +355,12 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     });
 
-    const taxaConversaoLeads = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
-    const comissaoMediaGlobalLeads = totalVendasParaMediaLeads > 0 ? somaTotalPercentualComissaoLeads / totalVendasParaMediaLeads : 0;
     const mediaComissaoRenovados = totalRenovadosParaMedia > 0 ? somaComissaoRenovados / totalRenovadosParaMedia : 0;
     const taxaRenovacao = totalRenovacoes > 0 ? (renovados / totalRenovacoes) * 100 : 0;
 
     return {
       totalLeads,
-      vendas,
+      vendas, // Vendas de leadsClosedAPI
       emContato,
       semContato,
       agendadosHoje,
@@ -321,10 +383,9 @@ const Dashboard = ({ usuarioLogado }) => {
       mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
       taxaRenovacao: taxaRenovacao.toFixed(2),
     };
-  }, [filteredLeads, filteredRenovacoes]);
+  }, [filteredLeadsFirebase, filteredRenovacoesFirebase, filteredLeadsClosedAPI]);
 
   const handleAplicarFiltroData = () => {
-    setIsRefreshing(true);
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
   };
 
@@ -421,7 +482,7 @@ const Dashboard = ({ usuarioLogado }) => {
 
   const cardGridStyle = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', // Ajustado para 160px
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '15px',
     marginBottom: '40px',
   };
@@ -436,19 +497,19 @@ const Dashboard = ({ usuarioLogado }) => {
     alignItems: 'center',
     justifyContent: 'center',
     textAlign: 'center',
-    minHeight: '100px', // Altura mínima para consistência
+    minHeight: '100px',
     transition: 'transform 0.2s ease-in-out',
   };
 
   const cardTitleStyle = {
-    fontSize: '13px', // Reduzido
+    fontSize: '13px',
     fontWeight: '500',
     color: '#666',
     marginBottom: '8px',
   };
 
   const cardValueStyle = {
-    fontSize: '22px', // Reduzido
+    fontSize: '22px',
     fontWeight: '700',
     color: '#333',
   };
@@ -536,11 +597,12 @@ const Dashboard = ({ usuarioLogado }) => {
         </button>
 
         <button
-          title='Atualizando dados...'
-          disabled={isRefreshing || isLoading}
+          title='Atualizar dados da API'
+          onClick={buscarLeadsClosedFromAPI}
+          disabled={isLoadingAPI}
           style={refreshButtonStyle}
         >
-          {(isRefreshing || isLoading) ? (
+          {isLoadingAPI ? (
             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -551,13 +613,13 @@ const Dashboard = ({ usuarioLogado }) => {
         </button>
       </div>
 
-      {isLoading && (
+      {isLoadingFirebase && (
         <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
           <p style={{ fontSize: '18px', color: '#555' }}>Carregando dados do dashboard...</p>
         </div>
       )}
 
-      {!isLoading && currentSection === 'segurosNovos' && (
+      {!isLoadingFirebase && currentSection === 'segurosNovos' && (
         <>
           <h2 style={sectionTitleStyle}>Seguros Novos</h2>
           <div style={cardGridStyle}>
@@ -624,7 +686,7 @@ const Dashboard = ({ usuarioLogado }) => {
         </>
       )}
 
-      {!isLoading && currentSection === 'renovacoes' && (
+      {!isLoadingFirebase && currentSection === 'renovacoes' && (
         <>
           <h2 style={sectionTitleStyle}>Renovações</h2>
           <div style={cardGridStyle}>
