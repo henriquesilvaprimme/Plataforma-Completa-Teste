@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCcw, Search, ChevronLeft, ChevronRight, CheckCircle, DollarSign, Calendar } from 'lucide-react';
-import { db } from './firebase'; // Importar o db do firebase
+import { db } from '../firebase'; // Importar o db do firebase
 import { collection, getDocs, onSnapshot, query, orderBy, where, Timestamp } from 'firebase/firestore'; // Importar funções do firestore
 
 // ===============================================
