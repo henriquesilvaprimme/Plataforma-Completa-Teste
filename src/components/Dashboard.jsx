@@ -2,21 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
 
 // Firebase v9 (modular) imports
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
 
 // Substitua pelos seus valores do Firebase
 const firebaseConfig = {
-  apiKey: "SUA_API_KEY",
-  authDomain: "SEU_AUTH_DOMAIN",
-  projectId: "SEU_PROJECT_ID",
-  storageBucket: "SEU_STORAGE_BUCKET",
-  messagingSenderId: "SEU_MESSAGING_SENDER_ID",
-  appId: "SEU_APP_ID"
+  apiKey: "AIzaSyAMLDTyqFCQhfll1yPMxUtttgjIxCisIP4",
+  authDomain: "painel-de-leads-novos.firebaseapp.com",
+  projectId: "painel-de-leads-novos",
+  storageBucket: "painel-de-leads-novos.firebasestorage.app",
+  messagingSenderId: "630294246900",
+  appId: "1:630294246900:web:764b52308c2ffa805175a1"
 };
 
-// Inicializa Firebase
-const app = initializeApp(firebaseConfig);
+// Inicializa Firebase (proteção contra inicialização duplicada)
+let app;
+if (!getApps().length) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApp();
+}
 const db = getFirestore(app);
 
 const Dashboard = ({ leads, usuarioLogado }) => {
