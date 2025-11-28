@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
+import { collection, getDocs } from 'firebase/firestore'; // Importar do Firebase
+import { db } from './firebase'; // Importar a instância do Firestore
 
 const Dashboard = ({ leads, usuarioLogado }) => {
   const [leadsClosed, setLeadsClosed] = useState([]);
@@ -20,7 +22,7 @@ const Dashboard = ({ leads, usuarioLogado }) => {
   const [dataFim, setDataFim] = useState(getDataHoje());
   const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  // Função auxiliar para validar e formatar a data (mantida da iteração anterior)
+  // Função auxiliar para validar e formatar a data
   const getValidDateStr = (dateValue) => {
     if (!dateValue) return null;
     const dateObj = new Date(dateValue);
@@ -30,27 +32,37 @@ const Dashboard = ({ leads, usuarioLogado }) => {
     return dateObj.toISOString().slice(0, 10);
   };
 
-  // Busca leads fechados (adaptada para ser a que será chamada pelo refresh)
-  const buscarLeadsClosedFromAPI = async () => {
+  // Função para buscar leads fechados do Firebase
+  const fetchLeadsFechadosFromFirebase = async () => {
     setIsLoading(true); // Ativa o loading do botão
     setLoading(true); // Ativa o loading original do Dashboard
     try {
-      const respostaLeads = await fetch(
-        'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec?v=pegar_clientes_fechados'
-      );
-      const dadosLeads = await respostaLeads.json();
-      setLeadsClosed(dadosLeads);
+      const leadsFechadosCol = collection(db, 'leadsFechados');
+      const leadSnapshot = await getDocs(leadsFechadosCol);
+      const data = leadSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      const formattedData = data.map(item => ({
+        ...item,
+        insuranceType: item.insuranceType || '',
+        MeioPagamento: item.MeioPagamento || '',
+        CartaoPortoNovo: item.CartaoPortoNovo || '',
+      }));
+      setLeadsClosed(formattedData);
     } catch (error) {
-      console.error('Erro ao buscar leads:', error);
+      console.error('Erro ao buscar leads fechados do Firebase:', error);
+      setLeadsClosed([]);
     } finally {
       setIsLoading(false); // Desativa o loading do botão
       setLoading(false); // Desativa o loading original do Dashboard
     }
   };
 
-  // refresh automático ao entrar na aba (similar ao useEffect do LeadsFechados)
+  // refresh automático ao entrar na aba
   useEffect(() => {
-    buscarLeadsClosedFromAPI();
+    fetchLeadsFechadosFromFirebase();
   }, []); // Array de dependências vazia para rodar apenas uma vez na montagem
 
   const aplicarFiltroData = () => {
@@ -209,7 +221,7 @@ const Dashboard = ({ leads, usuarioLogado }) => {
         {/* Botão de Refresh */}
         <button
           title='Clique para atualizar os dados'
-          onClick={buscarLeadsClosedFromAPI} // Chama a função que busca e atualiza os leads fechados
+          onClick={fetchLeadsFechadosFromFirebase} // Chama a função que busca e atualiza os leads fechados do Firebase
           disabled={isLoading}
           style={{
             backgroundColor: '#6c757d', // Cor cinza para o botão de refresh
