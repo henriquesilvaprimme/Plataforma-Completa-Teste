@@ -189,7 +189,7 @@ const Dashboard = ({ usuarioLogado }) => {
   }, [renovacoesData, usuarioLogado, filtroAplicado]);
 
   const dashboardStats = useMemo(() => {
-    let totalLeads = 0;
+    let totalLeads = filteredLeads.length;
     let vendas = 0;
     let emContato = 0;
     let semContato = 0;
@@ -221,7 +221,7 @@ const Dashboard = ({ usuarioLogado }) => {
     ];
 
     filteredLeads.forEach((lead) => {
-      totalLeads++;
+      totalLeads = filteredLeads.length;
 
       const s = lead.status ?? '';
 
