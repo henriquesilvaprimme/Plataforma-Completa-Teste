@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
+import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat } from 'lucide-react';
 
-const Dashboard = ({ leads, usuarioLogado }) => {
-  const [leadsClosed, setLeadsClosed] = useState([]);
-  const [loading, setLoading] = useState(true); // Estado original do Dashboard
-  const [isLoading, setIsLoading] = useState(false); // Novo estado para o botão de refresh
+const Dashboard = ({ usuarioLogado }) => {
+  const [leadsData, setLeadsData] = useState([]);
+  const [renovacoesData, setRenovacoesData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
-  // Inicializar dataInicio e dataFim com valores padrão ao carregar o componente
   const getPrimeiroDiaMes = () => {
     const hoje = new Date();
     return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
@@ -20,301 +23,663 @@ const Dashboard = ({ leads, usuarioLogado }) => {
   const [dataFim, setDataFim] = useState(getDataHoje());
   const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  // Função auxiliar para validar e formatar a data (mantida da iteração anterior)
-  const getValidDateStr = (dateValue) => {
-    if (!dateValue) return null;
-    const dateObj = new Date(dateValue);
-    if (isNaN(dateObj.getTime())) {
+  const normalizeLead = (docId, data = {}) => {
+    const safe = (v) => (v === undefined || v === null ? '' : v);
+
+    const toISO = (v) => {
+      if (!v && v !== 0) return '';
+      if (typeof v === 'object' && typeof v.toDate === 'function') {
+        return v.toDate().toISOString();
+      }
+      if (typeof v === 'string') return v;
+      try {
+        return new Date(v).toISOString();
+      } catch {
+        return '';
+      }
+    };
+
+    return {
+      id: String(docId),
+      status: typeof data.status === 'string' ? data.status : data.Status ?? '',
+      usuarioId:
+        data.usuarioId !== undefined && data.usuarioId !== null
+          ? Number(data.usuarioId)
+          : data.usuarioId ?? null,
+      responsavel: data.responsavel ?? data.Responsavel ?? '',
+      createdAt: toISO(data.createdAt ?? data.data ?? data.Data ?? data.criadoEm),
+      Seguradora: data.Seguradora ?? '',
+      PremioLiquido: data.PremioLiquido ?? '',
+      Comissao: data.Comissao ?? '',
+      ...data,
+    };
+  };
+
+  useEffect(() => {
+    const leadsColRef = collection(db, 'leads');
+    const unsubscribeLeads = onSnapshot(
+      leadsColRef,
+      (snapshot) => {
+        const leadsList = snapshot.docs.map((doc) =>
+          normalizeLead(doc.id, doc.data())
+        );
+        setLeadsData(leadsList);
+        setIsLoading(false);
+        setIsRefreshing(false);
+      },
+      (error) => {
+        console.error('Erro ao buscar leads:', error);
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    );
+
+    const renovacoesColRef = collection(db, 'renovacoes');
+    const unsubscribeRenovacoes = onSnapshot(
+      renovacoesColRef,
+      (snapshot) => {
+        const renovacoesList = snapshot.docs.map((doc) =>
+          normalizeLead(doc.id, doc.data())
+        );
+        setRenovacoesData(renovacoesList);
+      },
+      (error) => {
+        console.error('Erro ao buscar renovações:', error);
+      }
+    );
+
+    return () => {
+      unsubscribeLeads();
+      unsubscribeRenovacoes();
+    };
+  }, []);
+
+  const isAdmin = usuarioLogado?.tipo === 'Admin';
+
+  const getCurrentUserFromPropOrStorage = () => {
+    if (usuarioLogado) return usuarioLogado;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
       return null;
     }
-    return dateObj.toISOString().slice(0, 10);
   };
 
-  // Busca leads fechados (adaptada para ser a que será chamada pelo refresh)
-  const buscarLeadsClosedFromAPI = async () => {
-    setIsLoading(true); // Ativa o loading do botão
-    setLoading(true); // Ativa o loading original do Dashboard
+  const canViewLead = (lead) => {
+    if (isAdmin) return true;
+    const user = getCurrentUserFromPropOrStorage();
+    if (!user) return false;
+
+    const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
+    const userNome = String(user.nome ?? user.name ?? user.usuario ?? '')
+      .trim()
+      .toLowerCase();
+
+    const leadUsuarioId =
+      lead.usuarioId !== undefined && lead.usuarioId !== null
+        ? String(lead.usuarioId).trim()
+        : '';
+    if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+
+    const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '')
+      .trim()
+      .toLowerCase();
+    if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+
+    const leadUsuarioLogin = String(
+      lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? ''
+    ).trim();
+    const userLogin = String(user.usuario ?? '').trim();
+    if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+
+    return false;
+  };
+
+  const isStatusAgendado = (status) => {
+    return typeof status === 'string' && status.startsWith('Agendado');
+  };
+
+  const extractStatusDate = (status) => {
+    if (typeof status !== 'string') return null;
+    const parts = status.split(' - ');
+    return parts.length > 1 ? parts[1] : null;
+  };
+
+  const getValidDateStr = (dateValue) => {
+    if (!dateValue) return null;
     try {
-      const respostaLeads = await fetch(
-        'https://script.google.com/macros/s/AKfycby8vujvd5ybEpkaZ0kwZecAWOdaL0XJR84oKJBAIR9dVYeTCv7iSdTdHQWBb7YCp349/exec?v=pegar_clientes_fechados'
-      );
-      const dadosLeads = await respostaLeads.json();
-      setLeadsClosed(dadosLeads);
-    } catch (error) {
-      console.error('Erro ao buscar leads:', error);
-    } finally {
-      setIsLoading(false); // Desativa o loading do botão
-      setLoading(false); // Desativa o loading original do Dashboard
+      const dateObj = new Date(dateValue);
+      if (isNaN(dateObj.getTime())) {
+        return null;
+      }
+      return dateObj.toISOString().slice(0, 10);
+    } catch (e) {
+      return null;
     }
   };
 
-  // refresh automático ao entrar na aba (similar ao useEffect do LeadsFechados)
-  useEffect(() => {
-    buscarLeadsClosedFromAPI();
-  }, []); // Array de dependências vazia para rodar apenas uma vez na montagem
+  const filteredLeads = useMemo(() => {
+    // Garante que leadsData é um array antes de chamar filter
+    let filtered = (leadsData || []).filter((lead) => canViewLead(lead));
 
-  const aplicarFiltroData = () => {
+    filtered = filtered.filter((lead) => {
+      const dataLeadStr = getValidDateStr(lead.createdAt);
+      if (!dataLeadStr) return false;
+      if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
+      if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [leadsData, usuarioLogado, filtroAplicado]);
+
+  const filteredRenovacoes = useMemo(() => {
+    // Garante que renovacoesData é um array antes de chamar filter
+    let filtered = (renovacoesData || []).filter((renovacao) => canViewLead(renovacao));
+
+    filtered = filtered.filter((renovacao) => {
+      const dataRenovacaoStr = getValidDateStr(renovacao.createdAt);
+      if (!dataRenovacaoStr) return false;
+      if (filtroAplicado.inicio && dataRenovacaoStr < filtroAplicado.inicio) return false;
+      if (filtroAplicado.fim && dataRenovacaoStr > filtroAplicado.fim) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [renovacoesData, usuarioLogado, filtroAplicado]);
+
+  const dashboardStats = useMemo(() => {
+    let totalLeads = filteredLeads.length;
+    let vendas = 0;
+    let emContato = 0;
+    let semContato = 0;
+    let agendadosHoje = 0;
+    let perdidos = 0;
+
+    let portoSeguroLeads = 0;
+    let azulSegurosLeads = 0;
+    let itauSegurosLeads = 0;
+    let demaisSeguradorasLeads = 0;
+    let totalPremioLiquidoLeads = 0;
+    let somaTotalPercentualComissaoLeads = 0;
+    let totalVendasParaMediaLeads = 0;
+
+    let totalRenovacoes = filteredRenovacoes.length;
+    let renovados = 0;
+    let renovacoesPerdidas = 0;
+    let portoSeguroRenovacoes = 0;
+    let azulSegurosRenovacoes = 0;
+    let itauSegurosRenovacoes = 0;
+    let demaisSeguradorasRenovacoes = 0;
+    let premioLiquidoRenovados = 0;
+    let somaComissaoRenovados = 0;
+    let totalRenovadosParaMedia = 0;
+
+    const today = new Date().toLocaleDateString('pt-BR');
+    const demaisSeguradorasLista = [
+      'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
+    ];
+
+    filteredLeads.forEach((lead) => {
+      const s = lead.status ?? '';
+
+      if (s === 'Fechado') {
+        vendas++;
+        const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
+        if (segNormalized === 'porto seguro') {
+          portoSeguroLeads++;
+        } else if (segNormalized === 'azul seguros') {
+          azulSegurosLeads++;
+        } else if (segNormalized === 'itau seguros') {
+          itauSegurosLeads++;
+        } else if (demaisSeguradorasLista.includes(segNormalized)) {
+          demaisSeguradorasLeads++;
+        }
+
+        const premio = parseFloat(String(lead.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        totalPremioLiquidoLeads += premio;
+
+        const comissao = parseFloat(String(lead.Comissao).replace(/%/g, '')) || 0;
+        somaTotalPercentualComissaoLeads += comissao;
+        totalVendasParaMediaLeads++;
+
+      } else if (s === 'Em Contato') {
+        emContato++;
+      } else if (s === 'Sem Contato') {
+        semContato++;
+      } else if (isStatusAgendado(s)) {
+        const statusDateStr = extractStatusDate(s);
+        if (statusDateStr) {
+          const [dia, mes, ano] = statusDateStr.split('/');
+          const statusDateFormatted = new Date(
+            `${ano}-${mes}-${dia}T00:00:00`
+          ).toLocaleDateString('pt-BR');
+          if (statusDateFormatted === today) {
+            agendadosHoje++;
+          }
+        }
+      } else if (s === 'Perdido') {
+        perdidos++;
+      }
+    });
+
+    filteredRenovacoes.forEach((renovacao) => {
+      const s = renovacao.status ?? '';
+
+      if (s === 'Renovado') {
+        renovados++;
+        const segNormalized = (renovacao.Seguradora || '').toString().trim().toLowerCase();
+        if (segNormalized === 'porto seguro') {
+          portoSeguroRenovacoes++;
+        } else if (segNormalized === 'azul seguros') {
+          azulSegurosRenovacoes++;
+        } else if (segNormalized === 'itau seguros') {
+          itauSegurosRenovacoes++;
+        } else if (demaisSeguradorasLista.includes(segNormalized)) {
+          demaisSeguradorasRenovacoes++;
+        }
+
+        const premio = parseFloat(String(renovacao.PremioLiquido).replace(/[R$,.]/g, '')) / 100 || 0;
+        premioLiquidoRenovados += premio;
+        const comissao = parseFloat(String(renovacao.Comissao).replace(/%/g, '')) || 0;
+        somaComissaoRenovados += comissao;
+        totalRenovadosParaMedia++;
+      } else if (s === 'Perdido') {
+        renovacoesPerdidas++;
+      }
+    });
+
+    const taxaConversaoLeads = totalLeads > 0 ? (vendas / totalLeads) * 100 : 0;
+    const comissaoMediaGlobalLeads = totalVendasParaMediaLeads > 0 ? somaTotalPercentualComissaoLeads / totalVendasParaMediaLeads : 0;
+    const mediaComissaoRenovados = totalRenovadosParaMedia > 0 ? somaComissaoRenovados / totalRenovadosParaMedia : 0;
+    const taxaRenovacao = totalRenovacoes > 0 ? (renovados / totalRenovacoes) * 100 : 0;
+
+    return {
+      totalLeads,
+      vendas,
+      emContato,
+      semContato,
+      agendadosHoje,
+      perdidos,
+      taxaConversaoLeads: taxaConversaoLeads.toFixed(2),
+      portoSeguroLeads,
+      azulSegurosLeads,
+      itauSegurosLeads,
+      demaisSeguradorasLeads,
+      totalPremioLiquidoLeads,
+      comissaoMediaGlobalLeads: comissaoMediaGlobalLeads.toFixed(2),
+      totalRenovacoes,
+      renovados,
+      renovacoesPerdidas,
+      portoSeguroRenovacoes,
+      azulSegurosRenovacoes,
+      itauSegurosRenovacoes,
+      demaisSeguradorasRenovacoes,
+      premioLiquidoRenovados,
+      mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
+      taxaRenovacao: taxaRenovacao.toFixed(2),
+    };
+  }, [filteredLeads, filteredRenovacoes]);
+
+  const handleAplicarFiltroData = () => {
+    setIsRefreshing(true);
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
   };
 
-  // Filtro por data dos leads gerais (vindos via prop `leads`)
-  const leadsFiltradosPorDataGeral = leads.filter((lead) => {
-    const dataLeadStr = getValidDateStr(lead.createdAt);
-    if (!dataLeadStr) return false;
-    if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
-    if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
-    return true;
-  });
-
-  const totalLeads = leadsFiltradosPorDataGeral.length;
-  const leadsPerdidos = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Perdido').length;
-  const leadsEmContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Em Contato').length;
-  const leadsSemContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Sem Contato').length;
-
-  // Filtra leads fechados por responsável (do estado `leadsClosed`)
-  let leadsFiltradosClosed =
-    usuarioLogado.tipo === 'Admin'
-      ? leadsClosed
-      : leadsClosed.filter((lead) => lead.Responsavel === usuarioLogado.nome);
-
-  // Filtro de data nos leads fechados
-  leadsFiltradosClosed = leadsFiltradosClosed.filter((lead) => {
-    const dataLeadStr = getValidDateStr(lead.Data);
-    if (!dataLeadStr) return false;
-    if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
-    if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
-    return true;
-  });
-
-  // Normalização helper para o campo Seguradora (trim + lowercase)
-  const getSegNormalized = (lead) => {
-    return (lead?.Seguradora || '').toString().trim().toLowerCase();
+  const navigateSections = (direction) => {
+    if (direction === 'next') {
+      setCurrentSection('renovacoes');
+    } else {
+      setCurrentSection('segurosNovos');
+    }
   };
 
-  // Lista de seguradoras que devem ser contadas como "Demais Seguradoras"
-  const demaisSeguradorasLista = [
-    'tokio',
-    'yelum',
-    'suhai',
-    'allianz',
-    'bradesco',
-    'hdi',
-    'zurich',
-    'alfa',
-    'mitsui',
-    'mapfre',
-    'demais seguradoras' // inclui explicitamente o rótulo "Demais Seguradoras"
-  ];
+  // Estilos para o novo design
+  const containerStyle = {
+    padding: '20px',
+    fontFamily: 'Roboto, sans-serif',
+    backgroundColor: '#f4f6f9',
+    minHeight: '100vh',
+  };
 
-  // Contadores por seguradora (comparação normalizada)
-  const portoSeguro = leadsFiltradosClosed.filter((lead) => getSegNormalized(lead) === 'porto seguro').length;
-  const azulSeguros = leadsFiltradosClosed.filter((lead) => getSegNormalized(lead) === 'azul seguros').length;
-  const itauSeguros = leadsFiltradosClosed.filter((lead) => getSegNormalized(lead) === 'itau seguros').length;
+  const headerStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '30px',
+    borderBottom: '1px solid #e0e0e0',
+    paddingBottom: '15px',
+  };
 
-  // Agora 'demais' conta qualquer lead cuja seguradora esteja na lista acima (case-insensitive)
-  const demais = leadsFiltradosClosed.filter((lead) => demaisSeguradorasLista.includes(getSegNormalized(lead))).length;
+  const titleStyle = {
+    fontSize: '32px',
+    fontWeight: '700',
+    color: '#333',
+    margin: '0',
+  };
 
-  // O campo Vendas soma os contadores das seguradoras
-  const leadsFechadosCount = portoSeguro + azulSeguros + itauSeguros + demais;
+  const filterContainerStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginBottom: '30px',
+    flexWrap: 'wrap',
+    backgroundColor: '#fff',
+    padding: '15px',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+  };
 
-  // CÁLCULO DA TAXA DE CONVERSÃO (Nova lógica)
-  const taxaConversao =
-    totalLeads > 0
-      ? Math.round((leadsFechadosCount / totalLeads) * 100) // Calcula, multiplica por 100 e arredonda
-      : 0;
+  const inputStyle = {
+    padding: '10px 12px',
+    borderRadius: '6px',
+    border: '1px solid #dcdcdc',
+    fontSize: '14px',
+    color: '#555',
+  };
 
-  // Soma de prêmio líquido
-  const totalPremioLiquido = leadsFiltradosClosed.reduce(
-    (acc, lead) => acc + (Number(lead.PremioLiquido) || 0),
-    0
-  );
+  const buttonStyle = {
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '10px 18px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '600',
+    transition: 'background-color 0.3s ease',
+  };
 
-  // --- CÁLCULO DA MÉDIA COMISSÃO (AJUSTADO CONFORME SOLICITADO) ---
-  // Lógica: Total de percentual de comissao dividido pelo numero total de Vendas.
-
-  // 1. Soma total dos percentuais de comissão
-  const somaTotalPercentualComissao = leadsFiltradosClosed.reduce(
-    (acc, lead) => acc + (Number(lead.Comissao) || 0),
-    0
-  );
-
-  // 2. Número total de vendas (igual a leadsFiltradosClosed.length)
-  const totalVendasParaMedia = leadsFiltradosClosed.length;
-
-  // 3. Média Comissão: Total Percentual / Total Vendas
-  const comissaoMediaGlobal =
-    totalVendasParaMedia > 0 ? somaTotalPercentualComissao / totalVendasParaMedia : 0;
-  // --- FIM CÁLCULO AJUSTADO ---
-
-  const boxStyle = {
+  const refreshButtonStyle = {
+    backgroundColor: '#6c757d',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
     padding: '10px',
-    borderRadius: '5px',
-    flex: 1,
-    color: '#fff',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '40px',
+    height: '40px',
+    transition: 'background-color 0.3s ease',
+  };
+
+  const sectionTitleStyle = {
+    fontSize: '26px',
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: '20px',
+    borderBottom: '1px solid #e0e0e0',
+    paddingBottom: '10px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  };
+
+  const cardGridStyle = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', // Ajustado para 160px
+    gap: '15px',
+    marginBottom: '40px',
+  };
+
+  const cardStyle = {
+    backgroundColor: '#ffffff',
+    borderRadius: '10px',
+    padding: '15px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
     textAlign: 'center',
+    minHeight: '100px', // Altura mínima para consistência
+    transition: 'transform 0.2s ease-in-out',
+  };
+
+  const cardTitleStyle = {
+    fontSize: '13px', // Reduzido
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: '8px',
+  };
+
+  const cardValueStyle = {
+    fontSize: '22px', // Reduzido
+    fontWeight: '700',
+    color: '#333',
+  };
+
+  const PieChartComponent = ({ percentage, color = '#4CAF50' }) => {
+    const radius = 30;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+    return (
+      <svg width="80" height="80" viewBox="0 0 80 80" style={{ marginTop: '10px' }}>
+        <circle
+          cx="40"
+          cy="40"
+          r={radius}
+          fill="transparent"
+          stroke="#e0e0e0"
+          strokeWidth="8"
+        />
+        <circle
+          cx="40"
+          cy="40"
+          r={radius}
+          fill="transparent"
+          stroke={color}
+          strokeWidth="8"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          transform="rotate(-90 40 40)"
+        />
+        <text x="40" y="45" textAnchor="middle" fontSize="16" fill="#333" fontWeight="bold">
+          {percentage}%
+        </text>
+      </svg>
+    );
   };
 
   return (
-    <div style={{ padding: '20px' }}>
-      <h1>Dashboard</h1>
+    <div style={containerStyle}>
+      <div style={headerStyle}>
+        <h1 style={titleStyle}>Dashboard</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {currentSection === 'renovacoes' && (
+            <button
+              onClick={() => navigateSections('prev')}
+              style={{ ...refreshButtonStyle, backgroundColor: '#007bff' }}
+              title="Seção Anterior"
+            >
+              <ArrowLeftCircle size={24} />
+            </button>
+          )}
+          {currentSection === 'segurosNovos' && (
+            <button
+              onClick={() => navigateSections('next')}
+              style={{ ...refreshButtonStyle, backgroundColor: '#007bff' }}
+              title="Próxima Seção"
+            >
+              <ArrowRightCircle size={24} />
+            </button>
+          )}
+        </div>
+      </div>
 
-      {/* Filtro de datas com botão e o NOVO Botão de Refresh */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          marginBottom: '20px',
-          flexWrap: 'wrap',
-        }}
-      >
+      <div style={filterContainerStyle}>
         <input
           type="date"
           value={dataInicio}
           onChange={(e) => setDataInicio(e.target.value)}
-          style={{
-            padding: '6px 10px',
-            borderRadius: '6px',
-            border: '1px solid #ccc',
-            cursor: 'pointer',
-          }}
+          style={inputStyle}
           title="Data de Início"
         />
         <input
           type="date"
           value={dataFim}
           onChange={(e) => setDataFim(e.target.value)}
-          style={{
-            padding: '6px 10px',
-            borderRadius: '6px',
-            border: '1px solid #ccc',
-            cursor: 'pointer',
-          }}
+          style={inputStyle}
           title="Data de Fim"
         />
         <button
-          onClick={aplicarFiltroData}
-          style={{
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            padding: '6px 14px',
-            cursor: 'pointer',
-          }}
+          onClick={handleAplicarFiltroData}
+          style={buttonStyle}
         >
           Filtrar
         </button>
 
-        {/* Botão de Refresh */}
         <button
-          title='Clique para atualizar os dados'
-          onClick={buscarLeadsClosedFromAPI} // Chama a função que busca e atualiza os leads fechados
-          disabled={isLoading}
-          style={{
-            backgroundColor: '#6c757d', // Cor cinza para o botão de refresh
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            padding: '6px 10px', // Um pouco menor para o ícone
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minWidth: '36px', // Tamanho mínimo para o ícone
-            height: '36px',
-          }}
+          title='Atualizando dados...'
+          disabled={isRefreshing || isLoading}
+          style={refreshButtonStyle}
         >
-          {isLoading ? (
+          {(isRefreshing || isLoading) ? (
             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
           ) : (
-            <RefreshCcw size={20} /> // Ícone de refresh
+            <RefreshCcw size={20} />
           )}
         </button>
       </div>
 
-      {/* Spinner de carregamento para o Dashboard geral (opcional, pode ser removido se o `isLoading` for suficiente) */}
-      {loading && (
-        <div style={{ textAlign: 'center', padding: '20px' }}>
-          <p>Carregando dados do dashboard...</p>
-          {/* Você pode adicionar um spinner aqui se quiser um indicador visual */}
+      {isLoading && (
+        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+          <p style={{ fontSize: '18px', color: '#555' }}>Carregando dados do dashboard...</p>
         </div>
       )}
 
-      {!loading && ( // Renderiza o conteúdo apenas quando não estiver carregando
+      {!isLoading && currentSection === 'segurosNovos' && (
         <>
-          {/* Primeira linha de contadores */}
-          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#eee', color: '#333' }}>
-              <h3>Total de Leads</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{totalLeads}</p>
+          <h2 style={sectionTitleStyle}>Seguros Novos</h2>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f2f7' }}>
+              <h3 style={cardTitleStyle}>Total de Leads</h3>
+              <p style={cardValueStyle}>{dashboardStats.totalLeads}</p>
             </div>
-            {/* NOVO COTADO: TAXA DE CONVERSÃO */}
-            <div style={{ ...boxStyle, backgroundColor: '#9C27B0' }}> {/* Nova cor para destacar */}
-              <h3>Taxa de Conversão</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{taxaConversao}%</p>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Vendas</h3>
+              <p style={cardValueStyle}>{dashboardStats.vendas}</p>
             </div>
-            {/* FIM DO NOVO COTADO */}
-            <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
-              <h3>Vendas</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{leadsFechadosCount}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#ffe0b2' }}>
+              <h3 style={cardTitleStyle}>Em Contato</h3>
+              <p style={cardValueStyle}>{dashboardStats.emContato}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#F44336' }}>
-              <h3>Leads Perdidos</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{leadsPerdidos}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#ffcdd2' }}>
+              <h3 style={cardTitleStyle}>Sem Contato</h3>
+              <p style={cardValueStyle}>{dashboardStats.semContato}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF9800' }}>
-              <h3>Em Contato</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{leadsEmContato}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#f3e5f5' }}>
+              <h3 style={cardTitleStyle}>Leads Perdidos</h3>
+              <p style={cardValueStyle}>{dashboardStats.perdidos}</p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#9E9E9E' }}>
-              <h3>Sem Contato</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{leadsSemContato}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#e1f5fe' }}>
+              <h3 style={cardTitleStyle}>Taxa de Conversão</h3>
+              <p style={cardValueStyle}>{dashboardStats.taxaConversaoLeads}%</p>
             </div>
-          </div>
-
-          {/* Segunda linha de contadores */}
-          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-            <div style={{ ...boxStyle, backgroundColor: '#003366' }}>
-              <h3>Porto Seguro</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{portoSeguro}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f7fa' }}>
+              <h3 style={cardTitleStyle}>Total Prêmio Líquido</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.totalPremioLiquidoLeads.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
             </div>
-            <div style={{ ...boxStyle, backgroundColor: '#87CEFA' }}>
-              <h3>Azul Seguros</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{azulSeguros}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#FF8C00' }}>
-              <h3>Itau Seguros</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{itauSeguros}</p>
-            </div>
-            <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
-              <h3>Demais Seguradoras</h3>
-              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{demais}</p>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Média Comissão</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.comissaoMediaGlobalLeads.replace('.', ',')}%
+              </p>
             </div>
           </div>
 
-          {/* Somente para Admin: linha de Prêmio Líquido e Comissão */}
-            <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-              <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
-                <h3>Total Prêmio Líquido</h3>
-                <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {totalPremioLiquido.toLocaleString('pt-BR', {
-                    style: 'currency',
-                    currency: 'BRL',
-                  })}
-                </p>
-              </div>
-                
-              <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
-                <h3>Média Comissão</h3>
-                <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {comissaoMediaGlobal.toFixed(2).replace('.', ',')}%
-                </p>
-              </div>
+          <h3 style={{ fontSize: '20px', fontWeight: '600', color: '#555', marginBottom: '15px', borderBottom: '1px dashed #e0e0e0', paddingBottom: '8px' }}>Seguradoras (Novos)</h3>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#bbdefb' }}>
+              <h3 style={cardTitleStyle}>Porto Seguro</h3>
+              <p style={cardValueStyle}>{dashboardStats.portoSeguroLeads}</p>
             </div>
+            <div style={{ ...cardStyle, backgroundColor: '#c8e6c9' }}>
+              <h3 style={cardTitleStyle}>Azul Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.azulSegurosLeads}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffecb3' }}>
+              <h3 style={cardTitleStyle}>Itau Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.itauSegurosLeads}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#f8bbd0' }}>
+              <h3 style={cardTitleStyle}>Demais Seguradoras</h3>
+              <p style={cardValueStyle}>{dashboardStats.demaisSeguradorasLeads}</p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {!isLoading && currentSection === 'renovacoes' && (
+        <>
+          <h2 style={sectionTitleStyle}>Renovações</h2>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#e3f2fd' }}>
+              <h3 style={cardTitleStyle}>Total de Renovações</h3>
+              <p style={cardValueStyle}>{dashboardStats.totalRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Renovados</h3>
+              <p style={cardValueStyle}>{dashboardStats.renovados}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffe0b2' }}>
+              <h3 style={cardTitleStyle}>Renovações Perdidas</h3>
+              <p style={cardValueStyle}>{dashboardStats.renovacoesPerdidas}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#fce4ec', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+              <h3 style={cardTitleStyle}>Taxa de Renovação</h3>
+              <PieChartComponent percentage={parseFloat(dashboardStats.taxaRenovacao)} color="#673AB7" />
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e0f7fa' }}>
+              <h3 style={cardTitleStyle}>Prêmio Líquido Renovados</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.premioLiquidoRenovados.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#e8f5e9' }}>
+              <h3 style={cardTitleStyle}>Média Comissão Renovados</h3>
+              <p style={cardValueStyle}>
+                {dashboardStats.mediaComissaoRenovados.replace('.', ',')}%
+              </p>
+            </div>
+          </div>
+
+          <h3 style={{ fontSize: '20px', fontWeight: '600', color: '#555', marginBottom: '15px', borderBottom: '1px dashed #e0e0e0', paddingBottom: '8px' }}>Seguradoras (Renovações)</h3>
+          <div style={cardGridStyle}>
+            <div style={{ ...cardStyle, backgroundColor: '#bbdefb' }}>
+              <h3 style={cardTitleStyle}>Porto Seguro</h3>
+              <p style={cardValueStyle}>{dashboardStats.portoSeguroRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#c8e6c9' }}>
+              <h3 style={cardTitleStyle}>Azul Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.azulSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#ffecb3' }}>
+              <h3 style={cardTitleStyle}>Itau Seguros</h3>
+              <p style={cardValueStyle}>{dashboardStats.itauSegurosRenovacoes}</p>
+            </div>
+            <div style={{ ...cardStyle, backgroundColor: '#f8bbd0' }}>
+              <h3 style={cardTitleStyle}>Demais Seguradoras</h3>
+              <p style={cardValueStyle}>{dashboardStats.demaisSeguradorasRenovacoes}</p>
+            </div>
+          </div>
         </>
       )}
     </div>
