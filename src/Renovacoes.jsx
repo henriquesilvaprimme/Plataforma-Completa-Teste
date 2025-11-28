@@ -277,9 +277,15 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
 
     // --- Lógica de Filtro e ORDENAÇÃO (useMemo) ---
     const gerais = useMemo(() => {
+        const isAdmin = usuarioLogado?.tipo === 'Admin';
         let filteredLeads = leadsData.filter((lead) => { // Alterado para leadsData
             // Adicionado "Cancelado" aqui para sumir da lista
             if (lead.status === 'Fechado' || lead.status === 'Perdido' || lead.status === 'Cancelado') return false;
+
+            // Somente Admin pode ver todos os leads
+            if (!isAdmin && lead.responsavel !== usuarioLogado?.nome) {
+                return false;
+            }
 
             // 1. FILTRO DE NOME
             if (filtroNome && !nomeContemFiltro(lead.Nome, filtroNome)) {
