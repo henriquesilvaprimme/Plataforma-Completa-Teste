@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
-import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle, Users, DollarSign, PhoneCall, PhoneOff, Calendar, XCircle, TrendingUp, Repeat } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { RefreshCcw, ArrowRightCircle, ArrowLeftCircle } from 'lucide-react';
 
-const Dashboard = ({ usuarioLogado }) => {
-  const [leadsData, setLeadsData] = useState([]);
-  const [renovacoesData, setRenovacoesData] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+const Dashboard = ({ usuarioLogado, leads = [], renovacoes = [] }) => {
+  // Estado para controle de UI
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
+  // Helpers de Data
   const getPrimeiroDiaMes = () => {
     const hoje = new Date();
     return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
@@ -19,83 +16,14 @@ const Dashboard = ({ usuarioLogado }) => {
     return new Date().toISOString().slice(0, 10);
   };
 
+  // Estados de Filtro de Data
   const [dataInicio, setDataInicio] = useState(getPrimeiroDiaMes());
   const [dataFim, setDataFim] = useState(getDataHoje());
   const [filtroAplicado, setFiltroAplicado] = useState({ inicio: getPrimeiroDiaMes(), fim: getDataHoje() });
 
-  const normalizeLead = (docId, data = {}) => {
-    const safe = (v) => (v === undefined || v === null ? '' : v);
-
-    const toISO = (v) => {
-      if (!v && v !== 0) return '';
-      if (typeof v === 'object' && typeof v.toDate === 'function') {
-        return v.toDate().toISOString();
-      }
-      if (typeof v === 'string') return v;
-      try {
-        return new Date(v).toISOString();
-      } catch {
-        return '';
-      }
-    };
-
-    return {
-      id: String(docId),
-      status: typeof data.status === 'string' ? data.status : data.Status ?? '',
-      usuarioId:
-        data.usuarioId !== undefined && data.usuarioId !== null
-          ? Number(data.usuarioId)
-          : data.usuarioId ?? null,
-      responsavel: data.responsavel ?? data.Responsavel ?? '',
-      createdAt: toISO(data.createdAt ?? data.data ?? data.Data ?? data.criadoEm),
-      Seguradora: data.Seguradora ?? '',
-      PremioLiquido: data.PremioLiquido ?? '',
-      Comissao: data.Comissao ?? '',
-      ...data,
-    };
-  };
-
-  useEffect(() => {
-    const leadsColRef = collection(db, 'leads');
-    const unsubscribeLeads = onSnapshot(
-      leadsColRef,
-      (snapshot) => {
-        const leadsList = snapshot.docs.map((doc) =>
-          normalizeLead(doc.id, doc.data())
-        );
-        setLeadsData(leadsList);
-        setIsLoading(false);
-        setIsRefreshing(false);
-      },
-      (error) => {
-        console.error('Erro ao buscar leads:', error);
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    );
-
-    const renovacoesColRef = collection(db, 'renovacoes');
-    const unsubscribeRenovacoes = onSnapshot(
-      renovacoesColRef,
-      (snapshot) => {
-        const renovacoesList = snapshot.docs.map((doc) =>
-          normalizeLead(doc.id, doc.data())
-        );
-        setRenovacoesData(renovacoesList);
-      },
-      (error) => {
-        console.error('Erro ao buscar renovações:', error);
-      }
-    );
-
-    return () => {
-      unsubscribeLeads();
-      unsubscribeRenovacoes();
-    };
-  }, []);
-
   const isAdmin = usuarioLogado?.tipo === 'Admin';
 
+  // --- LÓGICA DE PERMISSÃO (Igual a usada nas Abas) ---
   const getCurrentUserFromPropOrStorage = () => {
     if (usuarioLogado) return usuarioLogado;
     try {
@@ -160,9 +88,12 @@ const Dashboard = ({ usuarioLogado }) => {
     }
   };
 
+  // --- MEMOIZAÇÃO: Filtra os dados LOCAIS (vindos das Props) ---
   const filteredLeads = useMemo(() => {
-    let filtered = leadsData.filter((lead) => canViewLead(lead));
+    // 1. Filtra por permissão (Admin vê tudo, User vê seus leads)
+    let filtered = (leads || []).filter((lead) => canViewLead(lead));
 
+    // 2. Filtra por Data
     filtered = filtered.filter((lead) => {
       const dataLeadStr = getValidDateStr(lead.createdAt);
       if (!dataLeadStr) return false;
@@ -172,11 +103,13 @@ const Dashboard = ({ usuarioLogado }) => {
     });
 
     return filtered;
-  }, [leadsData, usuarioLogado, filtroAplicado]);
+  }, [leads, usuarioLogado, filtroAplicado]);
 
   const filteredRenovacoes = useMemo(() => {
-    let filtered = renovacoesData.filter((renovacao) => canViewLead(renovacao));
+    // 1. Filtra por permissão
+    let filtered = (renovacoes || []).filter((renovacao) => canViewLead(renovacao));
 
+    // 2. Filtra por Data
     filtered = filtered.filter((renovacao) => {
       const dataRenovacaoStr = getValidDateStr(renovacao.createdAt);
       if (!dataRenovacaoStr) return false;
@@ -186,9 +119,9 @@ const Dashboard = ({ usuarioLogado }) => {
     });
 
     return filtered;
-  }, [renovacoesData, usuarioLogado, filtroAplicado]);
+  }, [renovacoes, usuarioLogado, filtroAplicado]);
 
-  // --- LÓGICA DE CONTAGEM E ESTATÍSTICAS ---
+  // --- CÁLCULO DE ESTATÍSTICAS (Baseado nos filtrados) ---
   const dashboardStats = useMemo(() => {
     let totalLeads = 0;
     let vendas = 0;
@@ -221,14 +154,14 @@ const Dashboard = ({ usuarioLogado }) => {
       'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
     ];
 
-    // Lógica para Leads
+    // Contagem LEADS
     filteredLeads.forEach((lead) => {
-      totalLeads++; // Conta cada lead encontrado na lista filtrada
+      totalLeads++;
 
       const s = lead.status ?? '';
 
       if (s === 'Fechado') {
-        vendas++; // Conta como venda se o status for 'Fechado'
+        vendas++;
         const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
         if (segNormalized === 'porto seguro') {
           portoSeguroLeads++;
@@ -267,13 +200,13 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     });
 
-    // Lógica para Renovações
+    // Contagem RENOVACOES
     filteredRenovacoes.forEach((renovacao) => {
-      totalRenovacoes++; // Conta cada renovação encontrada
+      totalRenovacoes++;
       const s = renovacao.status ?? '';
 
       if (s === 'Renovado') {
-        renovados++; // Conta como renovado se o status for 'Renovado'
+        renovados++;
         const segNormalized = (renovacao.Seguradora || '').toString().trim().toLowerCase();
         if (segNormalized === 'porto seguro') {
           portoSeguroRenovacoes++;
@@ -330,6 +263,8 @@ const Dashboard = ({ usuarioLogado }) => {
   const handleAplicarFiltroData = () => {
     setIsRefreshing(true);
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
+    // Simula um loading rápido apenas para feedback visual
+    setTimeout(() => setIsRefreshing(false), 300);
   };
 
   const navigateSections = (direction) => {
@@ -340,7 +275,7 @@ const Dashboard = ({ usuarioLogado }) => {
     }
   };
 
-  // Estilos para o novo design
+  // Estilos (Mantidos do original)
   const containerStyle = {
     padding: '20px',
     fontFamily: 'Roboto, sans-serif',
@@ -425,7 +360,7 @@ const Dashboard = ({ usuarioLogado }) => {
 
   const cardGridStyle = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', // Ajustado para 160px
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '15px',
     marginBottom: '40px',
   };
@@ -440,19 +375,19 @@ const Dashboard = ({ usuarioLogado }) => {
     alignItems: 'center',
     justifyContent: 'center',
     textAlign: 'center',
-    minHeight: '100px', // Altura mínima para consistência
+    minHeight: '100px',
     transition: 'transform 0.2s ease-in-out',
   };
 
   const cardTitleStyle = {
-    fontSize: '13px', // Reduzido
+    fontSize: '13px',
     fontWeight: '500',
     color: '#666',
     marginBottom: '8px',
   };
 
   const cardValueStyle = {
-    fontSize: '22px', // Reduzido
+    fontSize: '22px',
     fontWeight: '700',
     color: '#333',
   };
@@ -540,11 +475,11 @@ const Dashboard = ({ usuarioLogado }) => {
         </button>
 
         <button
-          title='Atualizando dados...'
-          disabled={isRefreshing || isLoading}
+          title='Atualizar Filtros'
+          disabled={isRefreshing}
           style={refreshButtonStyle}
         >
-          {(isRefreshing || isLoading) ? (
+          {isRefreshing ? (
             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -555,13 +490,7 @@ const Dashboard = ({ usuarioLogado }) => {
         </button>
       </div>
 
-      {isLoading && (
-        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-          <p style={{ fontSize: '18px', color: '#555' }}>Carregando dados do dashboard...</p>
-        </div>
-      )}
-
-      {!isLoading && currentSection === 'segurosNovos' && (
+      {currentSection === 'segurosNovos' && (
         <>
           <h2 style={sectionTitleStyle}>Seguros Novos</h2>
           <div style={cardGridStyle}>
@@ -628,7 +557,7 @@ const Dashboard = ({ usuarioLogado }) => {
         </>
       )}
 
-      {!isLoading && currentSection === 'renovacoes' && (
+      {currentSection === 'renovacoes' && (
         <>
           <h2 style={sectionTitleStyle}>Renovações</h2>
           <div style={cardGridStyle}>
