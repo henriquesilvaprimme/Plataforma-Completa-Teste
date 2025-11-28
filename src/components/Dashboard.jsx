@@ -204,7 +204,7 @@ const Dashboard = ({ usuarioLogado }) => {
     let somaTotalPercentualComissaoLeads = 0;
     let totalVendasParaMediaLeads = 0;
 
-    let totalRenovacoes = 0;
+    let totalRenovacoes = filteredRenovacoes.length;
     let renovados = 0;
     let renovacoesPerdidas = 0;
     let portoSeguroRenovacoes = 0;
@@ -221,7 +221,7 @@ const Dashboard = ({ usuarioLogado }) => {
     ];
 
     filteredLeads.forEach((lead) => {
-      totalLeads = filteredLeads.length;
+      // totalLeads++; // Já é calculado por filteredLeads.length
 
       const s = lead.status ?? '';
 
@@ -266,7 +266,7 @@ const Dashboard = ({ usuarioLogado }) => {
     });
 
     filteredRenovacoes.forEach((renovacao) => {
-      totalRenovacoes++;
+      // totalRenovacoes++; // Já é calculado por filteredRenovacoes.length
       const s = renovacao.status ?? '';
 
       if (s === 'Renovado') {
