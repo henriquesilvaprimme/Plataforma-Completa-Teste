@@ -850,7 +850,7 @@ function App() {
                 leads={
                   isAdmin
                     ? leads
-                    : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))
+                    : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))
                 }
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
@@ -861,7 +861,7 @@ function App() {
             path="/leads"
             element={
               <Leads
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))}
+                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))}
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead}
                 fetchLeadsFromSheet={fetchLeadsFromFirebase}
@@ -882,7 +882,7 @@ function App() {
             path="/renovacoes"
             element={
               <Renovacoes
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovações
+                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovações
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead} // Pode ser necessário uma função específica para renovações
                 fetchLeadsFromSheet={fetchLeadsFromFirebase} // Pode ser necessário uma função específica para renovações
@@ -903,12 +903,12 @@ function App() {
             path="/renovados"
             element={
               <Renovados
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovados
+                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovados
                 usuarios={usuarios}
                 onUpdateInsurer={atualizarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
                 onConfirmInsurer={confirmarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
                 onUpdateDetalhes={atualizarDetalhesLeadFechado} // Usando a função de LeadsFechados, se aplicável
-                usuarioLogado={usuarioLogado} // <--- AQUI ESTÁ O AJUSTE PRINCIPAL
+                usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
               />
@@ -948,7 +948,7 @@ function App() {
             path="/leads-perdidos"
             element={
               <LeadsPerdidos
-                leads={isAdmin ? leads.filter((lead) => String(lead.status) === 'Perdido') : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) && String(lead.status) === 'Perdido')}
+                leads={isAdmin ? leads.filter((lead) => String(lead.status) === 'Perdido') : leads.filter((lead) => (String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome)) && String(lead.status) === 'Perdido')}
                 usuarios={usuarios}
                 fetchLeadsFromSheet={fetchLeadsFromFirebase}
                 onAbrirLead={onAbrirLead}
