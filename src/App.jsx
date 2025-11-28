@@ -12,8 +12,9 @@ import CriarUsuario from './pages/CriarUsuario';
 import GerenciarUsuarios from './pages/GerenciarUsuarios';
 import Ranking from './pages/Ranking';
 import CriarLead from './pages/CriarLead';
-import Renovacoes from './Renovacoes'; // Importando o componente Renovacoes
-import Segurados from './pages/Segurados'; // Importando o componente Segurados
+import Renovacoes from './Renovacoes';
+import Renovados from './Renovados';
+import Segurados from './pages/Segurados';
 
 import { db } from './firebase';
 import { collection, getDocs, onSnapshot, query, orderBy } from 'firebase/firestore';
