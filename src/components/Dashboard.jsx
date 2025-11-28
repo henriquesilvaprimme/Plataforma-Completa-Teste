@@ -7,7 +7,7 @@ const Dashboard = ({ usuarioLogado }) => {
   const [leadsData, setLeadsData] = useState([]); // Leads do Firebase
   const [renovacoesData, setRenovacoesData] = useState([]); // Renovações do Firebase
   const [isLoadingFirebase, setIsLoadingFirebase] = useState(true); // Loading para dados do Firebase
-  const [isRefreshing, setIsRefreshing] = useState(false); // Novo estado para o botão de refresh
+  const [isRefreshing, setIsRefreshing] = useState(false); // Estado para o botão de refresh
   const [currentSection, setCurrentSection] = useState('segurosNovos'); // 'segurosNovos' ou 'renovacoes'
 
   // Funções para datas
@@ -29,8 +29,11 @@ const Dashboard = ({ usuarioLogado }) => {
     if (!dateValue) return null;
     try {
       let dateObj;
-      // Tenta parsear como ISO string primeiro
-      if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      // Tenta parsear como objeto Timestamp do Firebase
+      if (typeof dateValue === 'object' && typeof dateValue.toDate === 'function') {
+        dateObj = dateValue.toDate();
+      } else if (typeof dateValue === 'string' && dateValue.includes('T')) {
+        // Tenta parsear como ISO string
         dateObj = new Date(dateValue);
       } else {
         // Tenta parsear como data sem hora (YYYY-MM-DD)
@@ -38,21 +41,23 @@ const Dashboard = ({ usuarioLogado }) => {
         if (parts) {
           dateObj = new Date(parseInt(parts[1]), parseInt(parts[2]) - 1, parseInt(parts[3]));
         } else {
+          // Tenta parsear qualquer outra string de data
           dateObj = new Date(dateValue);
         }
       }
 
       if (isNaN(dateObj.getTime())) {
+        // console.warn("Data inválida após parse:", dateValue);
         return null;
       }
       return dateObj.toISOString().slice(0, 10);
     } catch (e) {
-      console.warn("Erro ao formatar data:", dateValue, e);
+      console.error("Erro ao formatar data:", dateValue, e);
       return null;
     }
   };
 
-  // Normaliza lead para garantir campos básicos
+  // Normaliza lead para garantir campos básicos e tratar valores nulos/indefinidos
   const normalizeLead = (docId, data = {}) => {
     const toISO = (v) => {
       if (!v && v !== 0) return '';
@@ -67,20 +72,19 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     };
 
-    return {
+    const normalized = {
       id: String(docId),
       status: typeof data.status === 'string' ? data.status : data.Status ?? '',
-      usuarioId:
-        data.usuarioId !== undefined && data.usuarioId !== null
-          ? Number(data.usuarioId)
-          : data.usuarioId ?? null,
+      usuarioId: data.usuarioId ?? data.ID ?? null, // Prioriza usuarioId, depois ID
       responsavel: data.responsavel ?? data.Responsavel ?? '',
       createdAt: toISO(data.createdAt ?? data.data ?? data.Data ?? data.criadoEm),
       Seguradora: data.Seguradora ?? '',
       PremioLiquido: data.PremioLiquido ?? '',
       Comissao: data.Comissao ?? '',
-      ...data,
+      ...data, // Mantém outros campos originais
     };
+    // console.log("Normalized Lead:", normalized); // Log para depuração
+    return normalized;
   };
 
   // Listeners para leads e renovações do Firebase
@@ -94,7 +98,8 @@ const Dashboard = ({ usuarioLogado }) => {
         );
         setLeadsData(leadsList);
         setIsLoadingFirebase(false);
-        setIsRefreshing(false); // Desativa o refresh ao carregar
+        setIsRefreshing(false);
+        // console.log("Leads do Firebase carregados:", leadsList.length, leadsList); // Log para depuração
       },
       (error) => {
         console.error('Erro ao buscar leads do Firebase:', error);
@@ -111,6 +116,7 @@ const Dashboard = ({ usuarioLogado }) => {
           normalizeLead(doc.id, doc.data())
         );
         setRenovacoesData(renovacoesList);
+        // console.log("Renovações do Firebase carregadas:", renovacoesList.length, renovacoesList); // Log para depuração
       },
       (error) => {
         console.error('Erro ao buscar renovações do Firebase:', error);
@@ -132,6 +138,7 @@ const Dashboard = ({ usuarioLogado }) => {
       if (!raw) return null;
       return JSON.parse(raw);
     } catch (e) {
+      console.error("Erro ao parsear usuário do localStorage:", e);
       return null;
     }
   };
@@ -139,7 +146,10 @@ const Dashboard = ({ usuarioLogado }) => {
   const canViewLead = (lead) => {
     if (isAdmin) return true;
     const user = getCurrentUserFromPropOrStorage();
-    if (!user) return false;
+    if (!user) {
+      // console.log("canViewLead: Usuário não logado ou não encontrado.");
+      return false;
+    }
 
     const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
     const userNome = String(user.nome ?? user.name ?? user.usuario ?? '')
@@ -150,19 +160,29 @@ const Dashboard = ({ usuarioLogado }) => {
       lead.usuarioId !== undefined && lead.usuarioId !== null
         ? String(lead.usuarioId).trim()
         : '';
-    if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+    if (leadUsuarioId && userId && leadUsuarioId === userId) {
+      // console.log(`canViewLead: Lead ${lead.id} visível por usuarioId. User ID: ${userId}, Lead User ID: ${leadUsuarioId}`);
+      return true;
+    }
 
     const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '')
       .trim()
       .toLowerCase();
-    if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+    if (leadResponsavel && userNome && leadResponsavel === userNome) {
+      // console.log(`canViewLead: Lead ${lead.id} visível por responsável. User Nome: ${userNome}, Lead Responsável: ${leadResponsavel}`);
+      return true;
+    }
 
     const leadUsuarioLogin = String(
       lead.usuario ?? lead.user ?? lead.raw?.usuario ?? lead.raw?.user ?? ''
     ).trim();
     const userLogin = String(user.usuario ?? '').trim();
-    if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+    if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) {
+      // console.log(`canViewLead: Lead ${lead.id} visível por login. User Login: ${userLogin}, Lead Login: ${leadUsuarioLogin}`);
+      return true;
+    }
 
+    // console.log(`canViewLead: Lead ${lead.id} NÃO visível. Lead:`, lead, "User:", user);
     return false;
   };
 
@@ -182,11 +202,12 @@ const Dashboard = ({ usuarioLogado }) => {
 
     filtered = filtered.filter((lead) => {
       const dataLeadStr = getValidDateStr(lead.createdAt);
-      if (!dataLeadStr) return false;
+      if (!dataLeadStr) return false; // Se a data for inválida, exclui o lead
       if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
       if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
       return true;
     });
+    // console.log("Leads filtrados (canViewLead + data):", filtered.length, filtered); // Log para depuração
     return filtered;
   }, [leadsData, usuarioLogado, filtroAplicado]);
 
@@ -207,7 +228,7 @@ const Dashboard = ({ usuarioLogado }) => {
 
   const dashboardStats = useMemo(() => {
     // --- Contadores para Seguros Novos (usando filteredLeadsFirebase) ---
-    // totalLeads agora é simplesmente o número de leads filtrados
+    // totalLeads agora é simplesmente o número de leads filtrados por canViewLead e data
     let totalLeads = filteredLeadsFirebase.length;
     let vendas = 0;
     let emContato = 0;
