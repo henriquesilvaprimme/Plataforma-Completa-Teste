@@ -12,7 +12,6 @@ import {
 
 import { RefreshCcw } from 'lucide-react'; // ícone (opcional)
 
-/*
  
  const firebaseConfig = {
   apiKey: "AIzaSyAMLDTyqFCQhfll1yPMxUtttgjIxCisIP4",
