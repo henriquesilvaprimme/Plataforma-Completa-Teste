@@ -7,7 +7,7 @@ import { collection, getDocs, onSnapshot, query, orderBy, where, Timestamp } fro
 // 1. COMPONENTE PRINCIPAL: Renovados
 // ===============================================
 
-const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, scrollContainerRef }) => {
+const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdateDetalhes, isAdmin, scrollContainerRef, usuarioLogado }) => { // Adicionado usuarioLogado
     // --- ESTADOS ---
     const [allRenovados, setAllRenovados] = useState([]); // Novo estado para armazenar TODOS os renovados
     const [renovadosFiltradosInterno, setRenovadosFiltradosInterno] = useState([]);
@@ -135,6 +135,15 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     // --- EFEITO DE FILTRAGEM E SINCRONIZAÇÃO DE ESTADOS (AGORA COM FILTRAGEM LOCAL) ---
     useEffect(() => {
         let renovadosParaFiltrar = [...allRenovados]; // Começa com TODOS os renovados
+
+        // AJUSTE AQUI: Filtragem para usuários não-admin
+        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
+            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
+            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
+                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
+                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
+            });
+        }
 
         // 1. Filtragem por Data (Local)
         if (filtroData) {
@@ -277,7 +286,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
         });
         // --------------------------------------------------------------------------------
 
-    }, [allRenovados, filtroNome, filtroData, valores]); // AJUSTE AQUI: Adicionado 'valores' como dependência para re-renderizar o PremioLiquidoInputDisplay
+    }, [allRenovados, filtroNome, filtroData, valores, isAdmin, usuarioLogado]); // AJUSTE AQUI: Adicionado 'valores', 'isAdmin', 'usuarioLogado' como dependências
 
 
     // --- FUNÇÕES DE HANDLER (NOVAS E EXISTENTES) ---
@@ -593,7 +602,7 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
                         const requiresCartaoPortoNovo = seguradorasComCartaoPortoNovo.includes(currentInsurer) && currentMeioPagamento === 'CP';
 
                         // Condição de validação para Cartão Porto Novo
-                        const cartaoPortoNovoInvalido = requiresCartaoPortoNovo && (!cartaoPortoNovo[`${lead.id}`] || cartaoPortoNovo[`${lead.id}`] === '');
+                        const cartaoPortoNovoInvalido = requiresCartaoPortoNovo && (!cartaoPortoNovo[`${lead.id}`] || cartaoPortaoNovo[`${lead.id}`] === '');
                         
                         // Lógica de desativação do botão de confirmação
                         const isButtonDisabled =
