@@ -1,6 +1,7 @@
-// src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { collection, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from 'firebase/firestore';
+import { db } from './firebaseConfig'; // Importe a instância do Firestore
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
@@ -12,13 +13,7 @@ import CriarUsuario from './pages/CriarUsuario';
 import GerenciarUsuarios from './pages/GerenciarUsuarios';
 import Ranking from './pages/Ranking';
 import CriarLead from './pages/CriarLead';
-import Renovacoes from './Renovacoes';
-import Renovados from './Renovados'; // Importação do componente Renovados
 
-import { db } from './firebase';
-import { collection, getDocs, onSnapshot, query, orderBy } from 'firebase/firestore';
-
-// Este componente agora vai rolar o elemento com a ref para o topo
 function ScrollToTop({ scrollContainerRef }) {
   const { pathname } = useLocation();
 
@@ -34,9 +29,11 @@ function ScrollToTop({ scrollContainerRef }) {
   return null;
 }
 
-// ======= CONFIGURAÇÃO DE SINCRONIZAÇÃO LOCAL (apenas armazenamento local; sem Sheets) =======
+// ======= CONFIGURAÇÃO DE SINCRONIZAÇÃO LOCAL (mantida, mas adaptada para Firebase) =======
 const LOCAL_CHANGES_KEY = 'leads_local_changes_v1';
-// ==========================================================================================
+const SYNC_DELAY_MS = 5 * 60 * 1000; // 5 minutos
+const SYNC_CHECK_INTERVAL_MS = 1000; // checa a cada 1s
+// =========================================================================================
 
 function App() {
   const navigate = useNavigate();
@@ -57,10 +54,8 @@ function App() {
   const [leadsCount, setLeadsCount] = useState(0);
   const [ultimoFechadoId, setUltimoFechadoId] = useState(null);
 
-  // Referência em memória das alterações locais (evita leituras/desescritas excessivas)
-  const localChangesRef = useRef({}); // formato: { [key]: { id, leadId, type, data, timestamp, ... } }
+  const localChangesRef = useRef({});
 
-  // Carrega background
   useEffect(() => {
     const img = new Image();
     img.src = '/background.png';
@@ -72,7 +67,7 @@ function App() {
     try {
       const raw = localStorage.getItem(LOCAL_CHANGES_KEY);
       if (raw) {
-        localChangesRef.current = JSON.parse(raw) || {};
+        localChangesRef.current = JSON.parse(raw);
       } else {
         localChangesRef.current = {};
       }
@@ -90,209 +85,39 @@ function App() {
     }
   };
 
-  // Merge seguro: não sobrescreve campos quando o valor do change é undefined
-  const mergeWithDefined = (base, changeData = {}) => {
-    const result = { ...base };
-    Object.keys(changeData).forEach((k) => {
-      const v = changeData[k];
-      if (v !== undefined) result[k] = v;
-    });
-    return result;
-  };
-
-  // Normaliza um objeto de lead vindo do sheet/local para garantir campos básicos,
-  // detectando automaticamente variações do campo Document ID (ignora maiúsc/minúsc e espaços)
-  const normalizeLead = (item = {}) => {
-    // tenta extrair id seguro
-    const rawId = item.id ?? item.ID ?? item.Id ?? item.IdLead ?? null;
-    const derivedId = rawId !== null && rawId !== undefined && rawId !== ''
-      ? String(rawId)
-      : (item.phone ? String(item.phone) : (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)));
-
-    // Detectar qualquer chave que contenha 'document' e 'id' (ex.: 'Document ID', 'documentId', 'DocumentID', etc.)
-    let rawDocumentId = null;
-    Object.keys(item || {}).forEach((k) => {
-      const cleaned = String(k).toLowerCase().replace(/\s+/g, '');
-      if (cleaned.includes('document') && cleaned.includes('id')) {
-        const v = item[k];
-        if (v !== undefined && v !== null && String(v).trim() !== '') {
-          rawDocumentId = String(v);
-        }
-      }
-      if (!rawDocumentId) {
-        const ck = String(k).toLowerCase();
-        if (ck === 'docid' || ck === 'doc_id' || ck === 'documentid') {
-          const v = item[k];
-          if (v !== undefined && v !== null && String(v).trim() !== '') {
-            rawDocumentId = String(v);
-          }
-        }
-      }
-    });
-
-    if (!rawDocumentId) {
-      rawDocumentId = item.documentId ?? item.docId ?? item.DocumentId ?? item.DocumentID ?? item['Document ID'] ?? null;
-    }
-
-    const documentId = rawDocumentId !== null && rawDocumentId !== undefined && String(rawDocumentId).trim() !== '' ? String(rawDocumentId).trim() : null;
-
-    const statusRaw = item.status ?? item.Status ?? item.stato ?? '';
-    const status = (typeof statusRaw === 'string' && statusRaw.trim() !== '') ? statusRaw : (item.confirmado ? 'Em Contato' : 'Selecione o status');
-
-    return {
-      id: String(item.id ?? item.ID ?? derivedId),
-      ID: String(item.ID ?? item.id ?? derivedId),
-      documentId: documentId,
-      'Document ID': item['Document ID'] ?? (documentId ? documentId : undefined),
-      name: item.name ?? item.Name ?? item.nome ?? '',
-      nome: item.nome ?? item.name ?? item.Name ?? '',
-      vehicleModel: item.vehicleModel ?? item.vehiclemodel ?? item.vehicle_model ?? item.Modelo ?? item.modelo ?? '',
-      vehicleYearModel: item.vehicleYearModel ?? item.vehicleyearmodel ?? item.vehicle_year_model ?? item.AnoModelo ?? item.anoModelo ?? '',
-      city: item.city ?? item.Cidade ?? item.cityName ?? '',
-      phone: item.phone ?? item.Telefone ?? item.Phone ?? '',
-      insuranceType: item.insuranceType ?? item.insurancetype ?? item.insurer ?? item.TipoSeguro ?? '',
-      status: status,
-      confirmado: item.confirmado === 'true' || item.confirmado === true || false,
-      insurer: item.insurer ?? item.Insurer ?? '',
-      insurerConfirmed: item.insurerConfirmed === 'true' || item.insurerConfirmed === true || false,
-      usuarioId: item.usuarioId ? Number(item.usuarioId) : (item.usuarioId ?? null),
-      premioLiquido: item.premioLiquido ?? item.PremioLiquido ?? '',
-      comissao: item.comissao ?? item.Comissao ?? '',
-      parcelamento: item.parcelamento ?? item.Parcelamento ?? '',
-      VigenciaFinal: item.VigenciaFinal ?? item.vigenciaFinal ?? '',
-      VigenciaInicial: item.VigenciaInicial ?? item.vigenciaFinal ?? '',
-      createdAt: item.createdAt ?? item.data ?? item.Data ?? new Date().toISOString(),
-      responsavel: item.responsavel ?? item.Responsavel ?? '',
-      editado: item.editado ?? '',
-      observacao: item.observacao ?? item.Observacao ?? '',
-      agendamento: item.agendamento ?? item.Agendamento ?? '',
-      agendados: item.agendados ?? false,
-      MeioPagamento: item.MeioPagamento ?? '',
-      CartaoPortoNovo: item.CartaoPortoNovo ?? '',
-      ...item,
-    };
-  };
-
-  // util: normalize string for comparisons
-  const norm = (v) => (v === undefined || v === null) ? '' : String(v).trim();
-
-  // util: compara um lead com um identificador (aceita id, ID, phone ou documentId), com trim
-  const leadMatchesIdent = (lead, ident) => {
-    if (!ident || !lead) return false;
-    const s = norm(ident);
-    return (
-      norm(lead.id) === s ||
-      norm(lead.ID) === s ||
-      norm(lead.phone) === s ||
-      norm(lead.documentId) === s ||
-      norm(lead['Document ID']) === s
-    );
-  };
-
-  // Aplica uma alteração no estado local imediatamente (optimistic)
-  const applyChangeToLocalState = (change) => {
-    try {
-      const leadId = change.leadId || change.data?.leadId || change.data?.id || change.data?.ID || change.data?.documentId || change.id;
-      const type = change.type;
-      const data = change.data || {};
-
-      if (!leadId && type !== 'criarLead') return;
-
-      // Atualiza leads (se aplicável)
-      setLeads(prev => {
-        if (!prev || prev.length === 0) return prev;
-        const updated = prev.map(l => {
-          if (leadMatchesIdent(l, leadId) || (data.phone && norm(data.phone) === norm(l.phone))) {
-            let copy = { ...l };
-            if (type === 'alterarAtribuido') {
-              if (data.usuarioId !== undefined) {
-                copy.usuarioId = data.usuarioId;
-                const u = usuarios.find(u => String(u.id) === String(data.usuarioId));
-                if (u) copy.responsavel = u.nome;
-              } else if (data.responsavel !== undefined) {
-                copy.responsavel = data.responsavel;
-              }
-            } else if (type === 'salvarObservacao') {
-              copy.observacao = data.observacao ?? copy.observacao;
-            } else if (type === 'atualizarStatus') {
-              copy.status = data.status ?? copy.status;
-              if (data.phone) copy.phone = data.phone;
-              copy.confirmado = true;
-            } else if (type === 'salvarAgendamento') {
-              copy.agendamento = data.dataAgendada ?? copy.agendamento;
-            } else if (type === 'alterar_seguradora') {
-              copy = { ...copy, ...data };
-            }
-            return copy;
-          }
-          return l;
-        });
-        return updated;
-      });
-
-      // Atualiza leadsFechados (se for alteração de seguradora)
-      if (type === 'alterar_seguradora') {
-        setLeadsFechados(prev => {
-          if (!prev || prev.length === 0) return prev;
-          const updated = prev.map(lf => {
-            if (leadMatchesIdent(lf, leadId) || (data.phone && norm(data.phone) === norm(lf.phone))) {
-              return { ...lf, ...data };
-            }
-            return lf;
-          });
-          return updated;
-        });
-      }
-    } catch (err) {
-      console.error('Erro ao aplicar alteração local ao estado:', err);
-    }
-  };
-
-  // Save a local change (used by child components, optimistic update already handled there)
   const saveLocalChange = (change) => {
-    try {
-      const derivedLeadId = change.id ?? change.data?.id ?? change.data?.ID ?? change.data?.leadId ?? change.data?.phone ?? change.data?.documentId ?? null;
-      const keyBase = derivedLeadId ? String(derivedLeadId) : (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
-      const key = keyBase;
-      const timestamp = Date.now();
-
-      const stored = {
-        ...change,
-        id: key,
-        leadId: derivedLeadId ?? null,
-        timestamp,
-      };
-
-      localChangesRef.current[key] = stored;
-      persistLocalChangesToStorage();
-
-      // Aplicar imediatamente no estado local para segurar alterações (optimistic)
-      applyChangeToLocalState(stored);
-    } catch (err) {
-      console.error('Erro em saveLocalChange:', err);
-    }
+    const key = String(change.id ?? (change.data && change.data.id) ?? crypto.randomUUID());
+    const timestamp = Date.now();
+    localChangesRef.current[key] = { ...change, timestamp, id: key };
+    persistLocalChangesToStorage();
   };
 
-  // ------------------ FETCH USUÁRIOS ------------------
+  // ------------------ FETCH USUÁRIOS (Firebase) ------------------
   const fetchUsuariosForLogin = async () => {
     try {
-      const snapshot = await getDocs(collection(db, 'usuarios'));
-      const users = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data() || {};
-        users.push({
-          id: docSnap.id,
-          usuario: data.usuario ?? '',
-          nome: data.nome ?? '',
-          email: data.email ?? '',
-          senha: data.senha ?? '',
-          status: data.status ?? 'Ativo',
-          tipo: data.tipo ?? 'Usuario',
-        });
-      });
-      setUsuarios(users);
+      const usuariosCol = collection(db, 'usuarios');
+      const usuarioSnapshot = await getDocs(usuariosCol);
+      const usuarioList = usuarioSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      if (Array.isArray(usuarioList)) {
+        setUsuarios(usuarioList.map(item => ({
+          id: item.id || '',
+          usuario: item.usuario || '',
+          nome: item.nome || '',
+          email: item.email || '',
+          senha: item.senha || '',
+          status: item.status || 'Ativo',
+          tipo: item.tipo || 'Usuario',
+        })));
+      } else {
+        setUsuarios([]);
+        console.warn('Resposta inesperada ao buscar usuários para login:', usuarioList);
+      }
     } catch (error) {
-      console.error('Erro ao buscar usuários do Firebase:', error);
+      console.error('Erro ao buscar usuários para login:', error);
       setUsuarios([]);
     }
   };
@@ -315,7 +140,7 @@ function App() {
       if (partesHifen) {
         dateObj = new Date(dataString + 'T00:00:00');
       } else if (partesBarra) {
-        dateObj = new Date(`${partesBarra[3]}-${partesBar[2]}-${partesBar[1]}T00:00:00`);
+        dateObj = new Date(`${partesBarra[3]}-${partesBarra[2]}-${partesBarra[1]}T00:00:00`);
       } else {
         dateObj = new Date(dataString);
       }
@@ -340,225 +165,312 @@ function App() {
     }
   };
 
-  // ------------------ FIRESTORE: listeners para leads ------------------
-  useEffect(() => {
-    // Listener para 'leads' (abertos e atualizações)
-    try {
-      const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
-      const unsubLeads = onSnapshot(qLeads, (snapshot) => {
-        const arr = snapshot.docs.map(d => {
-          // construímos um objeto similar ao que normalizeLead espera
-          const raw = { id: d.id, ...(d.data() || {}) };
-          return normalizeLead(raw);
-        });
-        setLeads(arr);
-      }, (err) => {
-        console.error('Erro no listener leads:', err);
+  // ------------------ FETCH LEADS (Firebase com merge de localChanges) ------------------
+  const applyLocalChangesToFetched = (fetchedLeads) => {
+    const now = Date.now();
+    const merged = fetchedLeads.map(lead => {
+      const key = Object.keys(localChangesRef.current).find(k => {
+        const ch = localChangesRef.current[k];
+        if (!ch) return false;
+        if (String(ch.id) === String(lead.id) || (ch.data && String(ch.data.id) === String(lead.id))) return true;
+        if (ch.data && ch.data.phone && String(ch.data.phone) === String(lead.phone)) return true;
+        return false;
       });
 
-      return () => {
-        try { unsubLeads(); } catch (e) { /* ignore */ }
-      };
-    } catch (e) {
-      console.error('Erro iniciando listener leads:', e);
-    }
-  }, []);
+      if (key) {
+        const change = localChangesRef.current[key];
+        if (now - change.timestamp < SYNC_DELAY_MS) {
+          return { ...lead, ...change.data };
+        }
+      }
+      return lead;
+    });
 
-  // OBS: removemos listener direto na coleção 'leadsFechados'.
-  // Em vez disso, derivamos leadsFechados a partir de 'leads' (coleção única) filtrando insurerConfirmed === true.
+    Object.keys(localChangesRef.current).forEach(k => {
+      const change = localChangesRef.current[k];
+      if (!change) return;
+      if (Date.now() - change.timestamp < SYNC_DELAY_MS) {
+        const exists = merged.some(l => String(l.id) === String(change.id) || (change.data && String(l.phone) === String(change.data.phone)));
+        if (!exists) {
+          merged.unshift({ id: change.id, ...change.data });
+        }
+      }
+    });
 
-  // Sempre que 'leads' mudar, atualiza 'leadsFechados' filtrando por insurerConfirmed === true
-  useEffect(() => {
-    try {
-      const fechados = (leads || []).filter((l) => l.insurerConfirmed === true);
-      // Ordena por closedAt (se disponível) ou por createdAt
-      fechados.sort((a, b) => {
-        const ta = a.closedAt ? (a.closedAt.seconds ? a.closedAt.seconds * 1000 : new Date(a.closedAt).getTime()) : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-        const tb = b.closedAt ? (b.closedAt.seconds ? b.closedAt.seconds * 1000 : new Date(b.closedAt).getTime()) : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-        return tb - ta;
-      });
-      setLeadsFechados(fechados);
-    } catch (err) {
-      console.error('Erro ao derivar leadsFechados a partir de leads:', err);
-      setLeadsFechados([]);
-    }
-  }, [leads]);
+    return merged;
+  };
 
-  // Também expomos fetchers pontuais (getDocs) caso algum componente queira forçar refresh manual
   const fetchLeadsFromFirebase = async () => {
     try {
-      const snap = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
-      const arr = snap.docs.map(d => normalizeLead({ id: d.id, ...(d.data() || {}) }));
-      setLeads(arr);
-    } catch (err) {
-      console.error('Erro ao buscar leads do Firebase:', err);
-      setLeads([]);
+      const leadsCol = collection(db, 'leads');
+      const leadSnapshot = await getDocs(leadsCol);
+      const data = leadSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      if (Array.isArray(data)) {
+        const sortedData = data;
+
+        const formattedLeads = sortedData.map((item, index) => ({
+          id: item.id || index + 1,
+          name: item.name || item.Name || '',
+          vehicleModel: item.vehiclemodel || item.vehicleModel || '',
+          vehicleYearModel: item.vehicleyearmodel || item.vehicleYearModel || '',
+          city: item.city || '',
+          phone: item.phone || item.Telefone || '',
+          insuranceType: item.insurancetype || item.insuranceType || '',
+          status: item.status || 'Selecione o status',
+          confirmado: item.confirmado === 'true' || item.confirmado === true,
+          insurer: item.insurer || '',
+          insurerConfirmed: item.insurerConfirmed === 'true' || item.insurerConfirmed === true,
+          usuarioId: item.usuarioId || null,
+          premioLiquido: item.premioLiquido || '',
+          comissao: item.comissao || '',
+          parcelamento: item.parcelamento || '',
+          VigenciaFinal: item.VigenciaFinal || '',
+          VigenciaInicial: item.VigenciaInicial || '',
+          createdAt: item.data || new Date().toISOString(),
+          responsavel: item.responsavel || '',
+          editado: item.editado || '',
+          observacao: item.observacao || '',
+          agendamento: item.agendamento || '',
+          agendados: item.agendados || '',
+          MeioPagamento: item.MeioPagamento || '',
+          CartaoPortoNovo: item.CartaoPortoNovo || '',
+        }));
+
+        loadLocalChangesFromStorage();
+        const merged = applyLocalChangesToFetched(formattedLeads);
+
+        if (!leadSelecionado) {
+          setLeads(merged);
+        }
+      } else {
+        if (!leadSelecionado) {
+          setLeads([]);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao buscar leads do Firebase:', error);
+      if (!leadSelecionado) {
+        setLeads([]);
+      }
     }
   };
 
-  // Atualizado: busca em 'leads' e filtra insurerConfirmed === true
+  useEffect(() => {
+    if (!isEditing) {
+      fetchLeadsFromFirebase();
+      const interval = setInterval(() => {
+        fetchLeadsFromFirebase();
+      }, 300000);
+      return () => clearInterval(interval);
+    }
+  }, [leadSelecionado, isEditing]);
+
+  // ------------------ LEADS FECHADOS (Firebase) -------------
   const fetchLeadsFechadosFromFirebase = async () => {
     try {
-      const snap = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
-      const arr = snap.docs.map(d => normalizeLead({ id: d.id, ...(d.data() || {}) }));
-      const fechados = arr.filter(l => l.insurerConfirmed === true);
-      // ordena por closedAt se houver
-      fechados.sort((a, b) => {
-        const ta = a.closedAt ? (a.closedAt.seconds ? a.closedAt.seconds * 1000 : new Date(a.closedAt).getTime()) : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-        const tb = b.closedAt ? (b.closedAt.seconds ? b.closedAt.seconds * 1000 : new Date(b.closedAt).getTime()) : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-        return tb - ta;
-      });
-      setLeadsFechados(fechados);
-    } catch (err) {
-      console.error('Erro ao buscar leadsFechados (via leads) do Firebase:', err);
+      const leadsFechadosCol = collection(db, 'leadsFechados');
+      const leadSnapshot = await getDocs(leadsFechadosCol);
+      const data = leadSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      const formattedData = data.map(item => ({
+        ...item,
+        insuranceType: item.insuranceType || '',
+        MeioPagamento: item.MeioPagamento || '',
+        CartaoPortoNovo: item.CartaoPortoNovo || '',
+      }));
+      setLeadsFechados(formattedData);
+
+    } catch (error) {
+      console.error('Erro ao buscar leads fechados do Firebase:', error);
       setLeadsFechados([]);
     }
   };
-  // -------------------------------------------------------------------------------------
 
-  // =========================================================================
-  // === LÓGICA ADICIONADA: Função para atualizar o nome em Leads Fechados ===
-  // =========================================================================
-  const handleLeadFechadoNameUpdate = (leadId, novoNome) => {
-    setLeadsFechados(prevLeads => {
-      const updatedLeads = prevLeads.map(lead => {
-        if (leadMatchesIdent(lead, leadId)) {
-          return {
-            ...lead,
-            name: novoNome,
-          };
-        }
-        return lead;
-      });
-      return updatedLeads;
-    });
-  };
-  // =========================================================================
-
-  // ------------------ Funções de adicionar/atualizar estado local --------------
-  const adicionarUsuario = (usuario) => {
-    setUsuarios((prev) => [...prev, { ...usuario, id: prev.length + 1 }]);
-  };
-
-  const adicionarNovoLead = (novoLead) => {
-    const normalized = normalizeLead(novoLead);
-    setLeads((prevLeads) => {
-      if (!prevLeads.some(lead => norm(lead.ID) === norm(normalized.ID) || norm(lead.id) === norm(normalized.id) || norm(lead.documentId ?? '') === norm(normalized.documentId ?? ''))) {
-        return [normalized, ...prevLeads];
-      }
-      return prevLeads;
-    });
-  };
-
-  const atualizarStatusLeadAntigo = (id, novoStatus, phone) => {
-    if (novoStatus === 'Fechado') {
-      setLeadsFechados((prev) => {
-        const atualizados = prev.map((leadsFechados) =>
-          leadsFechados.phone === phone ? { ...leadsFechados, Status: novoStatus, confirmado: true } : leadsFechados
-        );
-        return atualizados;
-      });
+  useEffect(() => {
+    if (!isEditing) {
+      fetchLeadsFechadosFromFirebase();
+      const interval = setInterval(() => {
+        fetchLeadsFechadosFromFirebase();
+      }, 300000);
+      return () => clearInterval(interval);
     }
+  }, [isEditing]);
 
-    setLeads((prev) =>
-      prev.map((lead) =>
-        lead.phone === phone ? { ...lead, status: novoStatus, confirmado: true } : lead
-      )
-    );
+  const handleLeadFechadoNameUpdate = async (leadId, novoNome) => {
+    try {
+      const leadRef = doc(db, 'leadsFechados', leadId);
+      await updateDoc(leadRef, { name: novoNome });
+      setLeadsFechados(prevLeads => {
+        const updatedLeads = prevLeads.map(lead => {
+          if (String(lead.id) === String(leadId)) {
+            return {
+              ...lead,
+              name: novoNome,
+            };
+          }
+          return lead;
+        });
+        return updatedLeads;
+      });
+    } catch (error) {
+      console.error('Erro ao atualizar nome do lead fechado no Firebase:', error);
+    }
   };
 
-  const atualizarStatusLead = (id, novoStatus, phone) => {
-    // Atualiza UI local imediatamente (optimistic)
-    setLeads((prev) =>
-      prev.map((lead) =>
-        lead.phone === phone ? { ...lead, status: novoStatus ?? lead.status, confirmado: true } : lead
-      )
-    );
+  const adicionarUsuario = async (usuario) => {
+    try {
+      const newDocRef = doc(collection(db, 'usuarios'));
+      await setDoc(newDocRef, { ...usuario, id: newDocRef.id });
+      setUsuarios((prev) => [...prev, { ...usuario, id: newDocRef.id }]);
+    } catch (error) {
+      console.error('Erro ao adicionar usuário no Firebase:', error);
+    }
+  };
 
-    // Salva localmente para sincronizar depois (agora apenas localChanges persistidos, sem Sheets)
-    saveLocalChange({
-      id: id,
-      type: 'atualizarStatus',
-      data: { leadId: id, status: novoStatus, phone: phone || null }
-    });
+  const adicionarNovoLead = async (novoLead) => {
+    try {
+      const newDocRef = doc(collection(db, 'leads'));
+      await setDoc(newDocRef, { ...novoLead, id: newDocRef.id });
+      setLeads((prevLeads) => {
+        if (!prevLeads.some(lead => lead.id === newDocRef.id)) {
+          return [{ ...novoLead, id: newDocRef.id }, ...prevLeads];
+        }
+        return prevLeads;
+      });
+    } catch (error) {
+      console.error('Erro ao adicionar novo lead no Firebase:', error);
+    }
+  };
 
-    if (novoStatus === 'Fechado') {
-      setLeadsFechados((prev) => {
-        const jaExiste = prev.some((lead) => lead.phone === phone);
+  const atualizarStatusLeadAntigo = async (id, novoStatus, phone) => {
+    try {
+      const leadRef = doc(db, 'leads', id);
+      await updateDoc(leadRef, { status: novoStatus, confirmado: true });
 
-        if (jaExiste) {
-          const atualizados = prev.map((lead) =>
-            lead.phone === phone ? { ...lead, Status: novoStatus, confirmado: true } : lead
+      if (novoStatus === 'Fechado') {
+        const leadData = (await getDoc(leadRef)).data();
+        const newDocRef = doc(collection(db, 'leadsFechados'));
+        await setDoc(newDocRef, { ...leadData, id: newDocRef.id, Status: novoStatus, confirmado: true });
+
+        setLeadsFechados((prev) => {
+          const atualizados = prev.map((leadsFechados) =>
+            leadsFechados.phone === phone ? { ...leadsFechados, Status: novoStatus, confirmado: true } : leadsFechados
           );
           return atualizados;
-        } else {
-          const leadParaAdicionar = leads.find((lead) => lead.phone === phone);
+        });
+      }
 
-          if (leadParaAdicionar) {
-            const newId = String(leadParaAdicionar.id ?? leadParaAdicionar.ID ?? leadParaAdicionar.documentId ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)));
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.phone === phone ? { ...lead, status: novoStatus, confirmado: true } : lead
+        )
+      );
+    } catch (error) {
+      console.error('Erro ao atualizar status do lead antigo no Firebase:', error);
+    }
+  };
 
-            const novoLeadFechado = {
-              ID: newId,
-              id: newId,
-              documentId: leadParaAdicionar.documentId ?? null,
-              name: leadParaAdicionar.name,
-              vehicleModel: leadParaAdicionar.vehicleModel,
-              vehicleYearModel: leadParaAdicionar.vehicleYearModel,
-              city: leadParaAdicionar.city,
-              phone: leadParaAdicionar.phone,
-              insuranceType: leadParaAdicionar.insuranceType || leadParaAdicionar.insuranceType || "",
-              Data: leadParaAdicionar.createdAt || new Date().toISOString(),
-              Responsavel: leadParaAdicionar.responsavel || "",
-              Status: "Fechado",
-              Seguradora: leadParaAdicionar.Seguradora || "",
-              PremioLiquido: leadParaAdicionar.premioLiquido || "",
-              Comissao: leadParaAdicionar.Comissao || "",
-              Parcelamento: leadParaAdicionar.Parcelamento || "",
-              VigenciaInicial: leadParaAdicionar.VigenciaInicial || "",
-              VigenciaFinal: leadParaAdicionar.VigenciaFinal || "",
-              MeioPagamento: leadParaAdicionar.MeioPagamento || '',
-              CartaoPortoNovo: leadParaAdicionar.CartaoPortoNovo || '',
-              usuario: leadParaAdicionar.usuario || "",
-              nome: leadParaAdicionar.nome || "",
-              email: leadParaAdicionar.email || "",
-              senha: leadParaAdicionar.senha || "",
-              status: leadParaAdicionar.status || "Ativo",
-              tipo: leadParaAdicionar.tipo || "Usuario",
-              "Ativo/Inativo": leadParaAdicionar["Ativo/Inativo"] || "Ativo",
-              confirmado: true,
-              observacao: leadParaAdicionar.observacao || ''
-            };
-            return [...prev, novoLeadFechado];
+  const atualizarStatusLead = async (id, novoStatus, phone) => {
+    try {
+      const leadRef = doc(db, 'leads', id);
+      await updateDoc(leadRef, { status: novoStatus, confirmado: true });
+
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.phone === phone ? { ...lead, status: novoStatus, confirmado: true } : lead
+        )
+      );
+
+      if (novoStatus === 'Fechado') {
+        const leadData = (await getDoc(leadRef)).data();
+        const newDocRef = doc(collection(db, 'leadsFechados'));
+        await setDoc(newDocRef, { ...leadData, id: newDocRef.id, Status: novoStatus, confirmado: true });
+
+        setLeadsFechados((prev) => {
+          const jaExiste = prev.some((lead) => lead.phone === phone);
+
+          if (jaExiste) {
+            const atualizados = prev.map((lead) =>
+              lead.phone === phone ? { ...lead, Status: novoStatus, confirmado: true } : lead
+            );
+            return atualizados;
+          } else {
+            const leadParaAdicionar = leads.find((lead) => lead.phone === phone);
+
+            if (leadParaAdicionar) {
+              const novoLeadFechado = {
+                ID: leadParaAdicionar.id || crypto.randomUUID(),
+                name: leadParaAdicionar.name,
+                vehicleModel: leadParaAdicionar.vehicleModel,
+                vehicleYearModel: leadParaAdicionar.vehicleYearModel,
+                city: leadParaAdicionar.city,
+                phone: leadParaAdicionar.phone,
+                insuranceType: leadParaAdicionar.insuranceType || "",
+                Data: leadParaAdicionar.createdAt || new Date().toISOString(),
+                Responsavel: leadParaAdicionar.responsavel || "",
+                Status: "Fechado",
+                Seguradora: leadParaAdicionar.Seguradora || "",
+                PremioLiquido: leadParaAdicionar.premioLiquido || "",
+                Comissao: leadParaAdicionar.Comissao || "",
+                Parcelamento: leadParaAdicionar.Parcelamento || "",
+                VigenciaInicial: leadParaAdicionar.VigenciaInicial || "",
+                VigenciaFinal: leadParaAdicionar.VigenciaFinal || "",
+                MeioPagamento: leadParaAdicionar.MeioPagamento || "",
+                CartaoPortoNovo: leadParaAdicionar.CartaoPortoNovo || "",
+                id: leadParaAdicionar.id || null,
+                usuario: leadParaAdicionar.usuario || "",
+                nome: leadParaAdicionar.nome || "",
+                email: leadParaAdicionar.email || "",
+                senha: leadParaAdicionar.senha || "",
+                status: leadParaAdicionar.status || "Ativo",
+                tipo: leadParaAdicionar.tipo || "Usuario",
+                "Ativo/Inativo": leadParaAdicionar["Ativo/Inativo"] || "Ativo",
+                confirmado: true,
+                observacao: leadParaAdicionar.observacao || ''
+              };
+              return [...prev, novoLeadFechado];
+            }
+            console.warn("Lead não encontrado na lista principal para adicionar aos fechados.");
+            return prev;
           }
-          console.warn("Lead não encontrado na lista principal para adicionar aos fechados.");
-          return prev;
-        }
-      });
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar status do lead no Firebase:', error);
     }
   };
 
   const handleConfirmAgendamento = async (leadId, dataAgendada) => {
     try {
-      if (typeof saveLocalChange === 'function') {
-        saveLocalChange({
-          id: leadId,
-          type: 'salvarAgendamento',
-          data: { leadId: leadId, dataAgendada: dataAgendada }
-        });
-      }
+      const leadRef = doc(db, 'leads', leadId);
+      await updateDoc(leadRef, { agendamento: dataAgendada });
+      await fetchLeadsFromFirebase();
     } catch (error) {
-      console.error('Erro ao agendar (salvando localmente):', error);
+      console.error('Erro ao confirmar agendamento no Firebase:', error);
     }
   };
 
-  const atualizarSeguradoraLead = (id, seguradora) => {
-    setLeads((prev) =>
-      prev.map((lead) =>
-        lead.id === id
-          ? limparCamposLead({ ...lead, insurer: seguradora })
-          : lead
-      )
-    );
+  const atualizarSeguradoraLead = async (id, seguradora) => {
+    try {
+      const leadRef = doc(db, 'leads', id);
+      await updateDoc(leadRef, { insurer: seguradora });
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === id
+            ? limparCamposLead({ ...lead, insurer: seguradora })
+            : lead
+        )
+      );
+    } catch (error) {
+      console.error('Erro ao atualizar seguradora do lead no Firebase:', error);
+    }
   };
 
   const limparCamposLead = (lead) => ({
@@ -569,32 +481,24 @@ function App() {
     VigenciaInicial: "",
   });
 
-  // FUNÇÃO confirmarSeguradoraLead (mantida) - atualiza leadsFechados local e salva change local
-  const confirmarSeguradoraLead = (id, premio, seguradora, comissao, parcelamento, vigenciaFinal, vigenciaInicial, meioPagamento, cartaoPortoNovo) => {
-    const ident = String(id);
-
+  const confirmarSeguradoraLead = async (id, premio, seguradora, comissao, parcelamento, vigenciaFinal, vigenciaInicial, meioPagamento, cartaoPortoNovo) => {
     try {
-      console.debug('[confirmarSeguradoraLead] ident recebido:', ident);
-      console.debug('[confirmarSeguradoraLead] leadsFechados snapshot (ID,id,documentId):', leadsFechados.map(l => ({
-        ID: norm(l.ID),
-        id: norm(l.id),
-        documentId: norm(l.documentId),
-        'Document ID': norm(l['Document ID'])
-      })));
-    } catch (e) {
-      // ignore
-    }
+      const leadRef = doc(db, 'leadsFechados', id);
+      await updateDoc(leadRef, {
+        Seguradora: seguradora,
+        PremioLiquido: premio,
+        Comissao: comissao,
+        Parcelamento: parcelamento,
+        VigenciaFinal: vigenciaFinal || '',
+        VigenciaInicial: vigenciaInicial || '',
+        MeioPagamento: meioPagamento || '',
+        CartaoPortoNovo: cartaoPortoNovo || '',
+        insurerConfirmed: true,
+      });
 
-    const found = leadsFechados.find(l => leadMatchesIdent(l, ident));
-
-    if (!found) {
-      console.warn(`Aviso: Lead com identificador ${ident} não encontrado por ID/id/phone/documentId. Irei criar um placeholder em leadsFechados.`);
-    }
-
-    setLeadsFechados((prev) => {
-      let updated = prev.map((l) => {
-        if (leadMatchesIdent(l, ident)) {
-          return {
+      setLeadsFechados((prev) => {
+        const atualizados = prev.map((l) =>
+          l.id === id ? {
             ...l,
             insurerConfirmed: true,
             Seguradora: seguradora,
@@ -605,103 +509,60 @@ function App() {
             VigenciaInicial: vigenciaInicial || '',
             MeioPagamento: meioPagamento || '',
             CartaoPortoNovo: cartaoPortoNovo || ''
-          };
-        }
-        return l;
+          } : l
+        );
+        return atualizados;
       });
-
-      const existsNow = updated.some(l => leadMatchesIdent(l, ident));
-      if (!existsNow) {
-        const placeholder = normalizeLead({
-          ID: ident,
-          id: ident,
-          documentId: ident,
-          'Document ID': ident,
-          name: '',
-          phone: '',
-          Data: new Date().toISOString(),
-          Responsavel: usuarioLogado?.nome ?? '',
-          Status: 'Fechado',
-          Seguradora: seguradora || '',
-          PremioLiquido: premio || '',
-          Comissao: comissao || '',
-          Parcelamento: parcelamento || '',
-          VigenciaInicial: vigenciaInicial || '',
-          VigenciaFinal: vigenciaFinal || '',
-          MeioPagamento: meioPagamento || '',
-          CartaoPortoNovo: cartaoPortoNovo || '',
-          confirmed: true,
-          insurerConfirmed: true
-        });
-        updated = [...updated, placeholder];
-        console.debug('[confirmarSeguradoraLead] placeholder criado para ident:', ident);
-      }
-
-      return updated;
-    });
-
-    try {
-      const changeId = ident ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
-      const dataToSave = {
-        id: changeId,
-        ID: changeId,
-        documentId: changeId,
-        Seguradora: seguradora,
-        PremioLiquido: premio,
-        Comissao: comissao,
-        Parcelamento: parcelamento,
-        VigenciaFinal: vigenciaFinal || '',
-        VigenciaInicial: vigenciaInicial || '',
-        MeioPagamento: meioPagamento || '',
-        CartaoPortoNovo: cartaoPortoNovo || ''
-      };
-      saveLocalChange({
-        id: changeId,
-        type: 'alterar_seguradora',
-        data: dataToSave
-      });
+      setTimeout(() => {
+        fetchLeadsFechadosFromFirebase();
+      }, 1000);
     } catch (error) {
-      console.error('Erro ao enfileirar alteração de seguradora localmente:', error);
+      console.error('Erro ao confirmar seguradora do lead no Firebase:', error);
     }
   };
 
-  const atualizarDetalhesLeadFechado = (id, campo, valor) => {
-    setLeadsFechados((prev) =>
-      prev.map((lead) =>
-        leadMatchesIdent(lead, id) ? { ...lead, [campo]: valor } : lead
-      )
-    );
-  };
-
-  const transferirLead = (leadId, responsavelId) => {
-    if (responsavelId === null) {
-      setLeads((prev) =>
+  const atualizarDetalhesLeadFechado = async (id, campo, valor) => {
+    try {
+      const leadRef = doc(db, 'leadsFechados', id);
+      await updateDoc(leadRef, { [campo]: valor });
+      setLeadsFechados((prev) =>
         prev.map((lead) =>
-          lead.id === leadId ? { ...lead, responsavel: null } : lead
+          lead.id === id ? { ...lead, [campo]: valor } : lead
         )
       );
-      return;
+    } catch (error) {
+      console.error('Erro ao atualizar detalhes do lead fechado no Firebase:', error);
     }
+  };
 
-    let usuario = usuarios.find((u) => u.id == responsavelId);
+  const transferirLead = async (leadId, responsavelId) => {
+    try {
+      const leadRef = doc(db, 'leads', leadId);
+      let responsavelNome = null;
+      if (responsavelId) {
+        const usuario = usuarios.find((u) => u.id === responsavelId);
+        if (usuario) {
+          responsavelNome = usuario.nome;
+        }
+      }
+      await updateDoc(leadRef, { responsavel: responsavelNome });
 
-    if (!usuario) {
-      return;
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === leadId ? { ...lead, responsavel: responsavelNome } : lead
+        )
+      );
+    } catch (error) {
+      console.error('Erro ao transferir lead no Firebase:', error);
     }
-
-    setLeads((prev) =>
-      prev.map((lead) =>
-        lead.id === leadId ? { ...lead, responsavel: usuario.nome } : lead
-      )
-    );
   };
 
   const onAbrirLead = (lead) => {
     setLeadSelecionado(lead);
 
     let path = '/leads';
-    if ((lead?.status ?? '') === 'Fechado') path = '/leads-fechados';
-    else if ((lead?.status ?? '') === 'Perdido') path = '/leads-perdidos';
+    if (lead.status === 'Fechado') path = '/leads-fechados';
+    else if (lead.status === 'Perdido') path = '/leads-perdidos';
 
     navigate(path);
   };
@@ -719,22 +580,58 @@ function App() {
     }
   };
 
-  // FUNÇÃO PARA SALVAR OBSERVAÇÃO (apenas local)
   const salvarObservacao = async (leadId, observacao) => {
     try {
-      if (typeof saveLocalChange === 'function') {
-        saveLocalChange({
-          id: leadId,
-          type: 'salvarObservacao',
-          data: { leadId, observacao: observacao }
-        });
-      }
-
-      console.log('Observação salva localmente.');
+      const leadRef = doc(db, 'leads', leadId);
+      await updateDoc(leadRef, { observacao: observacao });
+      console.log('Observação salva com sucesso no Firebase!');
+      await fetchLeadsFromFirebase();
     } catch (error) {
-      console.error('Erro ao salvar observação localmente:', error);
+      console.error('Erro ao salvar observação no Firebase:', error);
     }
   };
+
+  useEffect(() => {
+    loadLocalChangesFromStorage();
+
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      const dueKeys = [];
+      const keys = Object.keys(localChangesRef.current);
+
+      for (const k of keys) {
+        const change = localChangesRef.current[k];
+        if (!change) continue;
+        if (now - change.timestamp >= SYNC_DELAY_MS) {
+          dueKeys.push(k);
+        }
+      }
+
+      if (dueKeys.length === 0) return;
+
+      for (const key of dueKeys) {
+        const change = localChangesRef.current[key];
+        if (!change) continue;
+
+        try {
+          const docRef = doc(db, 'leads', change.id); // Assumindo que 'leads' é a coleção principal
+          await updateDoc(docRef, change.data);
+
+          delete localChangesRef.current[key];
+          persistLocalChangesToStorage();
+
+          setTimeout(() => {
+            fetchLeadsFromFirebase();
+            fetchLeadsFechadosFromFirebase();
+          }, 800);
+        } catch (err) {
+          console.error('Erro ao sincronizar alteração local com Firebase:', err);
+        }
+      }
+    }, SYNC_CHECK_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const formatarDataParaDDMMYYYY = (dataString) => {
     if (!dataString) return '';
@@ -773,11 +670,25 @@ function App() {
     }
   };
 
-  // ===================== FUNÇÃO: não força sincronização com Sheets (removido) =====================
-  const forceSyncWithSheets = async () => {
-    console.log('Sincronização com Google Sheets removida. As alterações são persistidas localmente apenas.');
+  const forceSyncWithFirebase = async () => {
+    try {
+      loadLocalChangesFromStorage();
+      const hadLocalChanges = Object.keys(localChangesRef.current).length > 0;
+      if (hadLocalChanges) {
+        console.log('forceSyncWithFirebase: limpando alterações locais pendentes para forçar estado do Firebase.');
+      }
+      localChangesRef.current = {};
+      persistLocalChangesToStorage();
+
+      await fetchLeadsFromFirebase();
+      await fetchLeadsFechadosFromFirebase();
+
+      console.log('forceSyncWithFirebase: dados atualizados a partir do Firebase e alterações locais removidas.');
+    } catch (error) {
+      console.error('Erro ao forçar sincronização com Firebase:', error);
+      alert('Erro ao sincronizar com o Firebase. Verifique a conexão e tente novamente.');
+    }
   };
-  // =============================================================================
 
   if (!isAuthenticated) {
     return (
@@ -845,12 +756,12 @@ function App() {
                 leadsClosed={
                   isAdmin
                     ? leadsFechados
-                    : leadsFechados.filter((lead) => String(lead.Responsavel) === String(usuarioLogado.nome))
+                    : leadsFechados.filter((lead) => lead.Responsavel === usuarioLogado.nome)
                 }
                 leads={
                   isAdmin
                     ? leads
-                    : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))
+                    : leads.filter((lead) => lead.responsavel === usuarioLogado.nome)
                 }
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
@@ -861,10 +772,10 @@ function App() {
             path="/leads"
             element={
               <Leads
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))}
+                leads={isAdmin ? leads : leads.filter((lead) => lead.responsavel === usuarioLogado.nome)}
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase}
+                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
                 transferirLead={transferirLead}
                 usuarioLogado={usuarioLogado}
                 leadSelecionado={leadSelecionado}
@@ -873,49 +784,7 @@ function App() {
                 onConfirmAgendamento={handleConfirmAgendamento}
                 salvarObservacao={salvarObservacao}
                 saveLocalChange={saveLocalChange}
-                forceSyncWithSheets={forceSyncWithSheets}
-              />
-            }
-          />
-          {/* Rota para Renovações */}
-          <Route
-            path="/renovacoes"
-            element={
-              <Renovacoes
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovações
-                usuarios={usuarios}
-                onUpdateStatus={atualizarStatusLead} // Pode ser necessário uma função específica para renovações
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Pode ser necessário uma função específica para renovações
-                transferirLead={transferirLead} // Pode ser necessário uma função específica para renovações
-                usuarioLogado={usuarioLogado}
-                leadSelecionado={leadSelecionado}
-                setIsEditing={setIsEditing}
-                scrollContainerRef={mainContentRef}
-                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovações
-                salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovações
-                saveLocalChange={saveLocalChange}
-                forceSyncWithSheets={forceSyncWithSheets}
-              />
-            }
-          />
-          {/* Rota para Renovados */}
-          <Route
-            path="/renovados"
-            element={
-              <Renovados
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovados
-                usuarios={usuarios}
-                onUpdateStatus={atualizarStatusLead} // Pode ser necessário uma função específica para renovados
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Pode ser necessário uma função específica para renovados
-                transferirLead={transferirLead} // Pode ser necessário uma função específica para renovados
-                usuarioLogado={usuarioLogado}
-                leadSelecionado={leadSelecionado}
-                setIsEditing={setIsEditing}
-                scrollContainerRef={mainContentRef}
-                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovados
-                salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovados
-                saveLocalChange={saveLocalChange}
-                forceSyncWithSheets={forceSyncWithSheets}
+                forceSyncWithSheets={forceSyncWithFirebase} // Alterado para Firebase
               />
             }
           />
@@ -923,21 +792,12 @@ function App() {
             path="/leads-fechados"
             element={
               <LeadsFechados
-                leads={
-                  isAdmin
-                    ? leadsFechados
-                    : leadsFechados.filter((lead) =>
-                        String(lead.responsavel) === String(usuarioLogado.nome) ||
-                        String(lead.Responsavel) === String(usuarioLogado.nome) ||
-                        String(lead.usuarioId) === String(usuarioLogado.id) ||
-                        String(lead.usuario) === String(usuarioLogado.usuario)
-                      )
-                }
+                leads={isAdmin ? leadsFechados : leadsFechados.filter((lead) => lead.Responsavel === usuarioLogado.nome)}
                 usuarios={usuarios}
                 onUpdateInsurer={atualizarSeguradoraLead}
                 onConfirmInsurer={confirmarSeguradoraLead}
                 onUpdateDetalhes={atualizarDetalhesLeadFechado}
-                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
+                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // Alterado para Firebase
                 isAdmin={isAdmin}
                 ultimoFechadoId={ultimoFechadoId}
                 onAbrirLead={onAbrirLead}
@@ -953,9 +813,9 @@ function App() {
             path="/leads-perdidos"
             element={
               <LeadsPerdidos
-                leads={isAdmin ? leads.filter((lead) => String(lead.status) === 'Perdido') : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) && String(lead.status) === 'Perdido')}
+                leads={isAdmin ? leads.filter((lead) => lead.status === 'Perdido') : leads.filter((lead) => lead.responsavel === usuarioLogado.nome && lead.status === 'Perdido')}
                 usuarios={usuarios}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase}
+                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
                 onAbrirLead={onAbrirLead}
                 isAdmin={isAdmin}
                 leadSelecionado={leadSelecionado}
@@ -965,8 +825,8 @@ function App() {
           />
           <Route path="/buscar-lead" element={<BuscarLead
             leads={leads}
-            fetchLeadsFromSheet={fetchLeadsFromFirebase}
-            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
+            fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
+            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // Alterado para Firebase
             setIsEditing={setIsEditing}
           />} />
           <Route
@@ -984,8 +844,8 @@ function App() {
           )}
           <Route path="/ranking" element={<Ranking
             usuarios={usuarios}
-            fetchLeadsFromSheet={fetchLeadsFromFirebase}
-            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
+            fetchLeadsFromSheet={fetchLeadsFromFirebase} // Alterado para Firebase
+            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase} // Alterado para Firebase
             leads={leads} />} />
           <Route path="*" element={<h1 style={{ padding: 20 }}>Página não encontrada</h1>} />
         </Routes>
