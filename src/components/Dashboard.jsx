@@ -188,6 +188,7 @@ const Dashboard = ({ usuarioLogado }) => {
     return filtered;
   }, [renovacoesData, usuarioLogado, filtroAplicado]);
 
+  // --- LÓGICA DE CONTAGEM E ESTATÍSTICAS ---
   const dashboardStats = useMemo(() => {
     let totalLeads = 0;
     let vendas = 0;
@@ -220,13 +221,14 @@ const Dashboard = ({ usuarioLogado }) => {
       'tokio', 'yelum', 'suhai', 'allianz', 'bradesco', 'hdi', 'zurich', 'alfa', 'mitsui', 'mapfre', 'demais seguradoras'
     ];
 
+    // Lógica para Leads
     filteredLeads.forEach((lead) => {
-      totalLeads++;
+      totalLeads++; // Conta cada lead encontrado na lista filtrada
 
       const s = lead.status ?? '';
 
       if (s === 'Fechado') {
-        vendas++;
+        vendas++; // Conta como venda se o status for 'Fechado'
         const segNormalized = (lead.Seguradora || '').toString().trim().toLowerCase();
         if (segNormalized === 'porto seguro') {
           portoSeguroLeads++;
@@ -265,12 +267,13 @@ const Dashboard = ({ usuarioLogado }) => {
       }
     });
 
+    // Lógica para Renovações
     filteredRenovacoes.forEach((renovacao) => {
-      totalRenovacoes++;
+      totalRenovacoes++; // Conta cada renovação encontrada
       const s = renovacao.status ?? '';
 
       if (s === 'Renovado') {
-        renovados++;
+        renovados++; // Conta como renovado se o status for 'Renovado'
         const segNormalized = (renovacao.Seguradora || '').toString().trim().toLowerCase();
         if (segNormalized === 'porto seguro') {
           portoSeguroRenovacoes++;
