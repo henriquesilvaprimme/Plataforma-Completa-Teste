@@ -136,6 +136,23 @@ const Renovados = ({ leads, usuarios, onUpdateInsurer, onConfirmInsurer, onUpdat
     useEffect(() => {
         let renovadosParaFiltrar = [...allRenovados]; // Começa com TODOS os renovados
 
+        // AJUSTE AQUI: Filtragem para usuários não-admin
+        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
+            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
+            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
+                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
+                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
+            });
+        }
+        // AJUSTE AQUI: Filtragem para usuários não-admin
+        if (!isAdmin && usuarioLogado && usuarioLogado.nome) {
+            const nomeUsuarioLogadoNormalizado = normalizarTexto(usuarioLogado.nome);
+            renovadosParaFiltrar = renovadosParaFiltrar.filter(lead => {
+                const responsavelLeadNormalizado = normalizarTexto(lead.Responsavel || '');
+                return responsavelLeadNormalizado === nomeUsuarioLogadoNormalizado;
+            });
+        }
+
         // 1. Filtragem por Data (Local)
         if (filtroData) {
             const [filterYear, filterMonth] = filtroData.split('-').map(Number);
