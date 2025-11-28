@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 
@@ -508,7 +507,7 @@ function App() {
               phone: leadParaAdicionar.phone,
               insuranceType: leadParaAdicionar.insuranceType || leadParaAdicionar.insuranceType || "",
               Data: leadParaAdicionar.createdAt || new Date().toISOString(),
-              Responsavel: leadParaAdicionar.responsavel || "",
+              Responsavel: usuarioLogado?.nome ?? '',
               Status: "Fechado",
               Seguradora: leadParaAdicionar.Seguradora || "",
               PremioLiquido: leadParaAdicionar.premioLiquido || "",
@@ -842,16 +841,6 @@ function App() {
             path="/dashboard"
             element={
               <Dashboard
-                leadsClosed={
-                  isAdmin
-                    ? leadsFechados
-                    : leadsFechados.filter((lead) => String(lead.Responsavel) === String(usuarioLogado.nome))
-                }
-                leads={
-                  isAdmin
-                    ? leads
-                    : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))
-                }
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
               />
