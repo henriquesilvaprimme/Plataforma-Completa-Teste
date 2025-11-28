@@ -1,17 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Lead from './components/Lead';
-import { RefreshCcw, Bell, Search, Send, Edit, Save, User, ChevronLeft, ChevronRight } from 'lucide-react'; // XOctagon e o comentário foram removidos
-
-// ===============================================
-// 1. CONFIGURAÇÃO
-// ===============================================
-const SHEET_NAME = 'Renovações';
-
-// URLs com o parâmetro 'sheet' adicionado para apontar para a nova aba
-const GOOGLE_SHEETS_SCRIPT_BASE_URL = '/api/gas';
-const ALTERAR_ATRIBUIDO_SCRIPT_URL = `${GOOGLE_SHEETS_SCRIPT_BASE_URL}?v=alterar_atribuido&sheet=${SHEET_NAME}`;
-const SALVAR_OBSERVACAO_SCRIPT_URL = `${GOOGLE_SHEETS_SCRIPT_BASE_URL}?action=salvarObservacao&sheet=${SHEET_NAME}`;
-// A URL para CANCELAR APÓLICE foi removida
+import { RefreshCcw, Bell, Search, Send, Edit, Save, User, ChevronLeft, ChevronRight } from 'lucide-react';
+import { collection, onSnapshot, doc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { db } from './firebase'; // ajuste o caminho se necessário
 
 // ===============================================
 // FUNÇÃO AUXILIAR PARA O FILTRO DE DATA
@@ -86,7 +77,8 @@ const StatusFilterButton = ({ status, count, currentFilter, onClick, isScheduled
 // ===============================================
 // 2. COMPONENTE PRINCIPAL: Renovacoes
 // ===============================================
-const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLogado, fetchLeadsFromSheet, scrollContainerRef }) => {
+const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, scrollContainerRef }) => {
+    const [leadsData, setLeadsData] = useState([]); // Alterado de 'leads' para 'leadsData'
     const [selecionados, setSelecionados] = useState({});
     const [paginaAtual, setPaginaAtual] = useState(1);
     const [isLoading, setIsLoading] = useState(false);
@@ -103,38 +95,93 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
     // NOVO ESTADO: Armazena o responsável recém-atribuído localmente (Lógica Otimista)
     const [responsavelLocal, setResponsavelLocal] = useState({});
 
+    // Normaliza um documento do Firestore para o formato esperado pelo React
+    const normalizeLead = (docId, data = {}) => {
+        const safe = (v) => (v === undefined || v === null ? '' : v);
+
+        const toISO = (v) => {
+            if (!v && v !== 0) return '';
+            if (typeof v === 'object' && typeof v.toDate === 'function') {
+                return v.toDate().toISOString();
+            }
+            if (typeof v === 'string') return v;
+            try {
+                return new Date(v).toISOString();
+            } catch {
+                return '';
+            }
+        };
+
+        return {
+            id: String(docId),
+            ID: data.ID ?? data.id ?? docId,
+            Nome: safe(data.Nome) || safe(data.name) || '',
+            Modelo: safe(data.Modelo) || safe(data.vehicleModel) || '',
+            AnoModelo: safe(data.AnoModelo) || safe(data.vehicleYearModel) || '',
+            Cidade: safe(data.Cidade) || safe(data.city) || '',
+            Telefone: safe(data.Telefone) || safe(data.phone) || '',
+            TipoSeguro: safe(data.TipoSeguro) || safe(data.insuranceType) || '',
+            status: typeof data.Status === 'string' ? data.Status : data.status ?? '',
+            Seguradora: safe(data.Seguradora) || safe(data.insurer) || '',
+            MeioPagamento: safe(data.MeioPagamento) || '',
+            CartaoPortoNovo: safe(data.CartaoPortoNovo) || '',
+            PremioLiquido: safe(data.PremioLiquido) || '',
+            Comissao: safe(data.Comissao) || '',
+            Parcelamento: safe(data.Parcelamento) || '',
+            VigenciaInicial: toISO(data.VigenciaInicial),
+            VigenciaFinal: toISO(data.VigenciaFinal),
+            createdAt: toISO(data.createdAt),
+            registeredAt: toISO(data.registeredAt), // Adicionado registeredAt
+            responsavel: safe(data.Responsavel) || safe(data.responsavel) || '',
+            observacao: safe(data.Observacao) || safe(data.observacao) || '',
+            usuarioId: data.usuarioId !== undefined && data.usuarioId !== null ? Number(data.usuarioId) : data.usuarioId ?? null,
+            ...data, // Mantém demais campos brutos se houver necessidade
+        };
+    };
+
     // --- LÓGICAS INICIAIS ---
     useEffect(() => {
-        const today = new Date();
-        const ano = today.getFullYear();
-        const mes = String(today.getMonth() + 1).padStart(2, '0');
-        const mesAnoAtual = `${ano}-${mes}`;
-        
-        setDataInput(mesAnoAtual);
-        setFiltroData(mesAnoAtual);
+        setIsLoading(true);
+        try {
+            const renovacoesRef = collection(db, 'renovacoes');
+            const q = query(renovacoesRef, orderBy('registeredAt', 'asc')); // Ordena por registeredAt
 
-        const initialObservacoes = {};
-        const initialIsEditingObservacao = {};
-        const initialResponsavelLocal = {};
-        
-        leads.forEach(lead => {
-            initialObservacoes[lead.id] = lead.observacao || '';
-            initialIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
-            // Preenche o estado local com o responsável atual do lead
-            if (lead.responsavel && lead.responsavel !== 'null') {
-                 initialResponsavelLocal[lead.id] = lead.responsavel;
-            }
-        });
-        setObservacoes(initialObservacoes);
-        setIsEditingObservacao(initialIsEditingObservacao);
-        setResponsavelLocal(initialResponsavelLocal); // Inicializa com o estado atual
+            const unsub = onSnapshot(q, (snapshot) => {
+                const lista = snapshot.docs.map((d) => normalizeLead(d.id, d.data()));
+                setLeadsData(lista);
 
-    }, [leads]);
+                const initialObservacoes = {};
+                const initialIsEditingObservacao = {};
+                const initialResponsavelLocal = {};
+                
+                lista.forEach(lead => {
+                    initialObservacoes[lead.id] = lead.observacao || '';
+                    initialIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
+                    if (lead.responsavel && lead.responsavel !== 'null') {
+                         initialResponsavelLocal[lead.id] = lead.responsavel;
+                    }
+                });
+                setObservacoes(initialObservacoes);
+                setIsEditingObservacao(initialIsEditingObservacao);
+                setResponsavelLocal(initialResponsavelLocal);
+
+                setIsLoading(false);
+            }, (error) => {
+                console.error("Erro ao buscar renovações:", error);
+                setIsLoading(false);
+            });
+
+            return () => unsub();
+        } catch (error) {
+            console.error("Erro ao configurar listener de renovações:", error);
+            setIsLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         const today = new Date();
         const todayFormatted = today.toLocaleDateString('pt-BR');
-        const todayAppointments = leads.filter(lead => {
+        const todayAppointments = leadsData.filter(lead => { // Alterado para leadsData
             if (!lead.status.startsWith('Agendado')) return false;
             const statusDateStr = lead.status.split(' - ')[1];
             if (!statusDateStr) return false;
@@ -144,33 +191,29 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
             return statusDateFormatted === todayFormatted;
         });
         setHasScheduledToday(todayAppointments.length > 0);
-    }, [leads]);
+    }, [leadsData]); // Alterado para leadsData
 
     const handleRefreshLeads = async () => {
         setIsLoading(true);
-        try {
-            await fetchLeadsFromSheet(SHEET_NAME);
-            // Re-inicializa os estados após o refresh para garantir sincronia
-            const refreshedObservacoes = {};
-            const refreshedIsEditingObservacao = {};
-            const refreshedResponsavelLocal = {};
+        // O listener onSnapshot já cuida da atualização em tempo real,
+        // então um "refresh" manual aqui apenas re-inicializa os estados locais
+        // com base nos dados mais recentes do leadsData (que já foi atualizado pelo listener).
+        const refreshedObservacoes = {};
+        const refreshedIsEditingObservacao = {};
+        const refreshedResponsavelLocal = {};
 
-            leads.forEach(lead => {
-                refreshedObservacoes[lead.id] = lead.observacao || '';
-                refreshedIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
-                if (lead.responsavel && lead.responsavel !== 'null') {
-                    refreshedResponsavelLocal[lead.id] = lead.responsavel;
-               }
-            });
-            setObservacoes(refreshedObservacoes);
-            setIsEditingObservacao(refreshedIsEditingObservacao);
-            setResponsavelLocal(refreshedResponsavelLocal);
-            setSelecionados({}); // Limpa qualquer seleção pendente
-        } catch (error) {
-            console.error('Erro ao buscar leads atualizados:', error);
-        } finally {
-            setIsLoading(false);
-        }
+        leadsData.forEach(lead => { // Alterado para leadsData
+            refreshedObservacoes[lead.id] = lead.observacao || '';
+            refreshedIsEditingObservacao[lead.id] = !lead.observacao || lead.observacao.trim() === '';
+            if (lead.responsavel && lead.responsavel !== 'null') {
+                refreshedResponsavelLocal[lead.id] = lead.responsavel;
+           }
+        });
+        setObservacoes(refreshedObservacoes);
+        setIsEditingObservacao(refreshedIsEditingObservacao);
+        setResponsavelLocal(refreshedResponsavelLocal);
+        setSelecionados({}); // Limpa qualquer seleção pendente
+        setIsLoading(false);
     };
 
     const leadsPorPagina = 10;
@@ -189,11 +232,9 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
         setFiltroData(''); setDataInput(''); setFiltroStatus('Todos'); setPaginaAtual(1);
     };
     
-    // 💥 ALTERAÇÃO AQUI: NÃO RESETAR FILTRO DE DATA OU NOME 💥
     const aplicarFiltroStatus = (status) => {
         setFiltroStatus(status);
-        setPaginaAtual(1); // Mantenha apenas a mudança de página
-        // Removemos: setFiltroNome(''); setNomeInput(''); setFiltroData(''); setDataInput('');
+        setPaginaAtual(1);
     };
     
     const nomeContemFiltro = (leadNome, filtroNome) => {
@@ -230,19 +271,19 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
 
     // --- Lógica de Filtro e ORDENAÇÃO (useMemo) ---
     const gerais = useMemo(() => {
-        let filteredLeads = leads.filter((lead) => {
+        let filteredLeads = leadsData.filter((lead) => { // Alterado para leadsData
             // Adicionado "Cancelado" aqui para sumir da lista
             if (lead.status === 'Fechado' || lead.status === 'Perdido' || lead.status === 'Cancelado') return false;
 
             // 1. FILTRO DE NOME
-            if (filtroNome && !nomeContemFiltro(lead.name, filtroNome)) {
+            if (filtroNome && !nomeContemFiltro(lead.Nome, filtroNome)) {
                 return false;
             }
             
-            // 2. FILTRO DE DATA (Vigência Final)
+            // 2. FILTRO DE DATA (registeredAt)
             if (filtroData) {
-                const leadVigenciaMesAno = getYearMonthFromDate(lead.VigenciaFinal);
-                if (leadVigenciaMesAno !== filtroData) {
+                const leadRegisteredMesAno = getYearMonthFromDate(lead.registeredAt);
+                if (leadRegisteredMesAno !== filtroData) {
                     return false;
                 }
             }
@@ -266,10 +307,10 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
             return true; 
         });
 
-        // LÓGICA DE ORDENAÇÃO POR VIGÊNCIA FINAL (Crescente)
+        // LÓGICA DE ORDENAÇÃO POR registeredAt (Crescente)
         filteredLeads.sort((a, b) => {
-            const dateA = parseDateToDateObject(a.VigenciaFinal);
-            const dateB = parseDateToDateObject(b.VigenciaFinal);
+            const dateA = parseDateToDateObject(a.registeredAt);
+            const dateB = parseDateToDateObject(b.registeredAt);
 
             // Se ambas as datas forem inválidas ou nulas, mantém a ordem original (0)
             if (!dateA && !dateB) return 0;
@@ -282,7 +323,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
         });
 
         return filteredLeads;
-    }, [leads, filtroStatus, filtroData, filtroNome]);
+    }, [leadsData, filtroStatus, filtroData, filtroNome]); // Alterado para leadsData
 
     // --- Contadores de Status ---
     const statusCounts = useMemo(() => {
@@ -290,7 +331,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
         const today = new Date();
         const todayFormatted = today.toLocaleDateString('pt-BR');
 
-        leads.forEach(lead => {
+        leadsData.forEach(lead => { // Alterado para leadsData
             // Adicionado "Cancelado" aqui
             if (lead.status === 'Fechado' || lead.status === 'Perdido' || lead.status === 'Cancelado') return;
 
@@ -311,7 +352,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
             }
         });
         return counts;
-    }, [leads]);
+    }, [leadsData]); // Alterado para leadsData
     
     // --- Lógica de Paginação ---
     const totalPaginas = Math.max(1, Math.ceil(gerais.length / leadsPorPagina));
@@ -346,16 +387,15 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
     };
 
     // Funções de Envio Assíncrono
-    const enviarLeadAtualizado = async (lead) => {
+    const enviarLeadAtualizado = async (leadId, usuarioId, responsavelNome) => {
         try {
-            await fetch(ALTERAR_ATRIBUIDO_SCRIPT_URL, {
-                method: 'POST', body: JSON.stringify(lead), headers: { 'Content-Type': 'application/json' },
+            const leadRef = doc(db, 'renovacoes', leadId);
+            await updateDoc(leadRef, {
+                usuarioId: usuarioId,
+                responsavel: responsavelNome
             });
-            // Opcional: Re-sincronizar após um tempo para garantir a persistência
         } catch (error) {
-            console.error('Erro ao enviar lead (assíncrono):', error);
-            // Aqui, em caso de falha, você reverteria o estado local para o anterior,
-            // mas manteremos a otimista por enquanto.
+            console.error('Erro ao enviar lead atualizado para Firebase:', error);
         }
     };
     
@@ -367,7 +407,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
             return;
         }
 
-        const lead = leads.find((l) => l.id === leadId);
+        const lead = leadsData.find((l) => l.id === leadId); // Alterado para leadsData
         if (!lead) return;
 
         const usuarioSelecionado = usuarios.find(u => String(u.id) === String(userId)); 
@@ -395,13 +435,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
         });
 
         // 4. ENVIO ASSÍNCRONO PARA O SERVIDOR
-        const leadAtualizado = { 
-            id: leadId,
-            responsavel: novoResponsavelNome,
-            usuarioId: String(userId)
-        };
-        
-        enviarLeadAtualizado(leadAtualizado);
+        enviarLeadAtualizado(leadId, String(userId), novoResponsavelNome);
     };
 
     const handleAlterar = (leadId) => {
@@ -439,11 +473,10 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
 
         setIsLoading(true);
         try {
-            await fetch(SALVAR_OBSERVACAO_SCRIPT_URL, {
-                method: 'POST', body: JSON.stringify({ leadId: leadId, observacao: observacaoTexto }), headers: { 'Content-Type': 'application/json' },
-            });
+            const leadRef = doc(db, 'renovacoes', leadId);
+            await updateDoc(leadRef, { observacao: observacaoTexto });
             setIsEditingObservacao(prev => ({ ...prev, [leadId]: false }));
-            await fetchLeadsFromSheet(SHEET_NAME);
+            // Não precisa de fetchLeadsFromSheet, o listener já atualiza leadsData
         } catch (error) {
             console.error('Erro ao salvar observação:', error);
             alert('Erro ao salvar observação. Por favor, tente novamente.');
@@ -456,9 +489,25 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
         setIsEditingObservacao(prev => ({ ...prev, [leadId]: true }));
     };
 
-    const handleConfirmStatus = (leadId, novoStatus, phone) => {
-        onUpdateStatus(leadId, novoStatus, phone);
-        const currentLead = leads.find(l => l.id === leadId);
+    const handleConfirmStatus = async (leadId, novoStatus, phone) => {
+        // onUpdateStatus é uma prop, se ela existir, a lógica de atualização de status
+        // no componente pai (Leads.jsx) será chamada.
+        // Para renovações, a atualização de status pode ser diferente ou não existir.
+        // Se onUpdateStatus for para a coleção 'leads', precisamos de uma função específica para 'renovacoes'.
+        // Por enquanto, vamos apenas atualizar o status no Firebase diretamente para 'renovacoes'.
+        setIsLoading(true);
+        try {
+            const leadRef = doc(db, 'renovacoes', leadId);
+            await updateDoc(leadRef, { status: novoStatus });
+            // O listener onSnapshot vai atualizar o estado leadsData
+        } catch (error) {
+            console.error('Erro ao atualizar status da renovação no Firebase:', error);
+            alert('Erro ao atualizar status da renovação. Por favor, tente novamente.');
+        } finally {
+            setIsLoading(false);
+        }
+
+        const currentLead = leadsData.find(l => l.id === leadId); // Alterado para leadsData
         const hasNoObservacao = !currentLead?.observacao || currentLead.observacao.trim() === '';
 
         if ((novoStatus === 'Em Contato' || novoStatus === 'Sem Contato' || novoStatus.startsWith('Agendado')) && hasNoObservacao) {
@@ -468,10 +517,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
         } else {
             setIsEditingObservacao(prev => ({ ...prev, [leadId]: false }));
         }
-        fetchLeadsFromSheet(SHEET_NAME);
     };
-
-    // --- A função handleCancelarApolice foi removida conforme solicitação ---
 
     const getFullStatus = (status) => {
         return status || 'Novo';
@@ -551,14 +597,14 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
                         </button>
                     </div>
 
-                    {/* Filtro de Data (Vigência Final) */}
+                    {/* Filtro de Data (registeredAt) */}
                     <div className="flex items-center gap-2 flex-1 min-w-[200px] justify-end">
                         <input
                             type="month"
                             value={dataInput}
                             onChange={(e) => setDataInput(e.target.value)}
                             className="p-3 border border-gray-300 rounded-lg cursor-pointer text-sm"
-                            title="Filtrar por Mês/Ano da Vigência Final"
+                            title="Filtrar por Mês/Ano da Data de Registro"
                         />
                         <button 
                             onClick={aplicarFiltroData}
@@ -643,7 +689,7 @@ const Renovacoes = ({ leads, usuarios, onUpdateStatus, transferirLead, usuarioLo
                                         {/* Botão de Cancelar Apólice removido conforme solicitação */}
                                     </div>
                                     <p className="mt-1 text-xs text-gray-400">
-                                        Criado em: {formatarData(lead.createdAt)}
+                                        Registrado em: {formatarData(lead.registeredAt)}
                                     </p>
                                 </div>
 
