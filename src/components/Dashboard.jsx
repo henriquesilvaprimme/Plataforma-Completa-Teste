@@ -339,7 +339,7 @@ const Dashboard = ({ usuarioLogado }) => {
       mediaComissaoRenovados: mediaComissaoRenovados.toFixed(2),
       taxaRenovacao: taxaRenovacao.toFixed(2),
     };
-  }, [filteredLeadsFirebase, filteredRenovacoesFirebase]); // Removido filteredLeadsClosedAPI
+  }, [filteredLeadsFirebase, filteredRenovacoesFirebase]);
 
   const handleAplicarFiltroData = () => {
     setIsRefreshing(true); // Ativa o refresh ao aplicar filtro
