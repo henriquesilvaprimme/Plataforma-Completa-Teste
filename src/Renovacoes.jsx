@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import Lead from './components/LeadRenovacoes';
+import Lead from './components/Lead';
 import { RefreshCcw, Bell, Search, Send, Edit, Save, User, ChevronLeft, ChevronRight } from 'lucide-react';
 import { collection, onSnapshot, doc, updateDoc, query, orderBy } from 'firebase/firestore';
 import { db } from './firebase'; // ajuste o caminho se necessário
