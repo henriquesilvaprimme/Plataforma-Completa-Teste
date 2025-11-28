@@ -1,5 +1,3 @@
-Por favor. Poderia somente criar a logica no codigo abaixo para o usuario Admin possa ver todos os leads da aba Renovados. Nao mude mais nada no codigo, ai me envie ele completo.
-
 import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCcw, Search, ChevronLeft, ChevronRight, CheckCircle, DollarSign, Calendar } from 'lucide-react';
 import { db } from './firebase'; // Importar o db do firebase
