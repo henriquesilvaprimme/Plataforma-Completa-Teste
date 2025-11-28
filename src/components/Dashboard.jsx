@@ -24,7 +24,7 @@ if (!getApps().length) {
 }
 const db = getFirestore(app);
 
-const Dashboard = ({ leads, usuarioLogado }) => {
+const Dashboard = ({ leads = [], usuarioLogado = { tipo: 'User', nome: '' } }) => {
   const [leadsClosed, setLeadsClosed] = useState([]);
   const [loading, setLoading] = useState(true); // Estado original do Dashboard
   const [isLoading, setIsLoading] = useState(false); // Novo estado para o botão de refresh
@@ -81,7 +81,7 @@ const Dashboard = ({ leads, usuarioLogado }) => {
   };
 
   // Filtro por data dos leads gerais (vindos via prop `leads`)
-  const leadsFiltradosPorDataGeral = leads.filter((lead) => {
+  const leadsFiltradosPorDataGeral = (leads || []).filter((lead) => {
     const dataLeadStr = getValidDateStr(lead.createdAt);
     if (!dataLeadStr) return false;
     if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
@@ -96,12 +96,12 @@ const Dashboard = ({ leads, usuarioLogado }) => {
 
   // Filtra leads fechados por responsável (do estado `leadsClosed`)
   let leadsFiltradosClosed =
-    usuarioLogado.tipo === 'Admin'
-      ? leadsClosed
-      : leadsClosed.filter((lead) => lead.Responsavel === usuarioLogado.nome);
+    (usuarioLogado?.tipo === 'Admin')
+      ? (leadsClosed || [])
+      : (leadsClosed || []).filter((lead) => lead.Responsavel === (usuarioLogado?.nome || ''));
 
   // Filtro de data nos leads fechados
-  leadsFiltradosClosed = leadsFiltradosClosed.filter((lead) => {
+  leadsFiltradosClosed = (leadsFiltradosClosed || []).filter((lead) => {
     const dataLeadStr = getValidDateStr(lead.Data);
     if (!dataLeadStr) return false;
     if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
