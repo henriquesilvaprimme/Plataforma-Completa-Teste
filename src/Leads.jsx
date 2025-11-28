@@ -1225,7 +1225,7 @@ const Leads = ({
                             </div>
                           )}
                         </div>
-                      )}
+                      </div>
 
                       {hasObservacaoSection && (
                         <div className="lg:border-l lg:border-gray-200 lg:pl-6 space-y-3">
