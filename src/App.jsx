@@ -773,7 +773,7 @@ function App() {
                 leads={isAdmin ? leads : leads.filter((lead) => lead.responsavel === usuarioLogado.nome)}
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase}
+                fetchLeadsFromFirebase={fetchLeadsFromFirebase}
                 transferirLead={transferirLead}
                 usuarioLogado={usuarioLogado}
                 leadSelecionado={leadSelecionado}
@@ -782,7 +782,7 @@ function App() {
                 onConfirmAgendamento={handleConfirmAgendamento}
                 salvarObservacao={salvarObservacao}
                 saveLocalChange={saveLocalChange}
-                forceSyncWithSheets={forceSyncWithFirebase}
+                forceSyncWithFirebase={forceSyncWithFirebase}
               />
             }
           />
@@ -795,7 +795,7 @@ function App() {
                 onUpdateInsurer={atualizarSeguradoraLead}
                 onConfirmInsurer={confirmarSeguradoraLead}
                 onUpdateDetalhes={atualizarDetalhesLeadFechado}
-                fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
+                fetchLeadsFechadosFromFirebase={fetchLeadsFechadosFromFirebase}
                 isAdmin={isAdmin}
                 ultimoFechadoId={ultimoFechadoId}
                 onAbrirLead={onAbrirLead}
@@ -813,7 +813,7 @@ function App() {
               <LeadsPerdidos
                 leads={isAdmin ? leads.filter((lead) => lead.status === 'Perdido') : leads.filter((lead) => lead.responsavel === usuarioLogado.nome && lead.status === 'Perdido')}
                 usuarios={usuarios}
-                fetchLeadsFromSheet={fetchLeadsFromFirebase}
+                fetchLeadsFromFirebase={fetchLeadsFromFirebase}
                 onAbrirLead={onAbrirLead}
                 isAdmin={isAdmin}
                 leadSelecionado={leadSelecionado}
@@ -879,8 +879,8 @@ function App() {
           )}
           <Route path="/ranking" element={<Ranking
             usuarios={usuarios}
-            fetchLeadsFromSheet={fetchLeadsFromFirebase}
-            fetchLeadsFechadosFromSheet={fetchLeadsFechadosFromFirebase}
+            fetchLeadsFromFirebase={fetchLeadsFromFirebase}
+            fetchLeadsFechadosFromFirebase={fetchLeadsFechadosFromFirebase}
             leads={leads} />} />
           <Route path="*" element={<h1 style={{ padding: 20 }}>Página não encontrada</h1>} />
         </Routes>
