@@ -207,6 +207,7 @@ const Dashboard = ({ usuarioLogado }) => {
 
   const dashboardStats = useMemo(() => {
     // --- Contadores para Seguros Novos (usando filteredLeadsFirebase) ---
+    // totalLeads agora é simplesmente o número de leads filtrados
     let totalLeads = filteredLeadsFirebase.length;
     let vendas = 0;
     let emContato = 0;
