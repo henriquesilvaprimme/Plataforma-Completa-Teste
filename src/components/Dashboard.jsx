@@ -221,8 +221,6 @@ const Dashboard = ({ usuarioLogado }) => {
     ];
 
     filteredLeads.forEach((lead) => {
-      // totalLeads++; // Já é calculado por filteredLeads.length
-
       const s = lead.status ?? '';
 
       if (s === 'Fechado') {
@@ -266,7 +264,6 @@ const Dashboard = ({ usuarioLogado }) => {
     });
 
     filteredRenovacoes.forEach((renovacao) => {
-      // totalRenovacoes++; // Já é calculado por filteredRenovacoes.length
       const s = renovacao.status ?? '';
 
       if (s === 'Renovado') {
