@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Leads from './Leads';
@@ -20,7 +19,6 @@ import { collection, getDocs, onSnapshot, query, orderBy } from 'firebase/firest
 // Este componente agora vai rolar o elemento com a ref para o topo
 function ScrollToTop({ scrollContainerRef }) {
   const { pathname } = useLocation();
-
   useEffect(() => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
@@ -29,7 +27,6 @@ function ScrollToTop({ scrollContainerRef }) {
       });
     }
   }, [pathname, scrollContainerRef]);
-
   return null;
 }
 
@@ -46,7 +43,6 @@ function App() {
   const [senhaInput, setSenhaInput] = useState('');
   const [usuarioLogado, setUsuarioLogado] = useState(null);
   const [backgroundLoaded, setBackgroundLoaded] = useState(false);
-
   const [leads, setLeads] = useState([]);
   const [leadsFechados, setLeadsFechados] = useState([]);
   const [leadSelecionado, setLeadSelecionado] = useState(null);
@@ -54,9 +50,9 @@ function App() {
   const [usuarios, setUsuarios] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
   const [ultimoFechadoId, setUltimoFechadoId] = useState(null);
-
   // Referência em memória das alterações locais (evita leituras/desescritas excessivas)
-  const localChangesRef = useRef({}); // formato: { [key]: { id, leadId, type, data, timestamp, ... } }
+  const localChangesRef = useRef({});
+  // formato: { [key]: { id, leadId, type, data, timestamp, ... } }
 
   // Carrega background
   useEffect(() => {
@@ -64,7 +60,6 @@ function App() {
     img.src = '/background.png';
     img.onload = () => setBackgroundLoaded(true);
   }, []);
-
   // ------------------ Helpers de localChanges ------------------
   const loadLocalChangesFromStorage = () => {
     try {
@@ -87,7 +82,6 @@ function App() {
       console.error('Erro ao salvar localChanges:', err);
     }
   };
-
   // Merge seguro: não sobrescreve campos quando o valor do change é undefined
   const mergeWithDefined = (base, changeData = {}) => {
     const result = { ...base };
@@ -106,7 +100,6 @@ function App() {
     const derivedId = rawId !== null && rawId !== undefined && rawId !== ''
       ? String(rawId)
       : (item.phone ? String(item.phone) : (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)));
-
     // Detectar qualquer chave que contenha 'document' e 'id' (ex.: 'Document ID', 'documentId', 'DocumentID', etc.)
     let rawDocumentId = null;
     Object.keys(item || {}).forEach((k) => {
@@ -127,7 +120,6 @@ function App() {
         }
       }
     });
-
     if (!rawDocumentId) {
       rawDocumentId = item.documentId ?? item.docId ?? item.DocumentId ?? item.DocumentID ?? item['Document ID'] ?? null;
     }
@@ -136,7 +128,6 @@ function App() {
 
     const statusRaw = item.status ?? item.Status ?? item.stato ?? '';
     const status = (typeof statusRaw === 'string' && statusRaw.trim() !== '') ? statusRaw : (item.confirmado ? 'Em Contato' : 'Selecione o status');
-
     return {
       id: String(item.id ?? item.ID ?? derivedId),
       ID: String(item.ID ?? item.id ?? derivedId),
@@ -170,7 +161,6 @@ function App() {
       ...item,
     };
   };
-
   // util: normalize string for comparisons
   const norm = (v) => (v === undefined || v === null) ? '' : String(v).trim();
 
@@ -193,7 +183,6 @@ function App() {
       const leadId = change.leadId || change.data?.leadId || change.data?.id || change.data?.ID || change.data?.documentId || change.id;
       const type = change.type;
       const data = change.data || {};
-
       if (!leadId && type !== 'criarLead') return;
 
       // Atualiza leads (se aplicável)
@@ -203,11 +192,13 @@ function App() {
           if (leadMatchesIdent(l, leadId) || (data.phone && norm(data.phone) === norm(l.phone))) {
             let copy = { ...l };
             if (type === 'alterarAtribuido') {
+
               if (data.usuarioId !== undefined) {
                 copy.usuarioId = data.usuarioId;
                 const u = usuarios.find(u => String(u.id) === String(data.usuarioId));
                 if (u) copy.responsavel = u.nome;
               } else if (data.responsavel !== undefined) {
+
                 copy.responsavel = data.responsavel;
               }
             } else if (type === 'salvarObservacao') {
@@ -227,7 +218,6 @@ function App() {
         });
         return updated;
       });
-
       // Atualiza leadsFechados (se for alteração de seguradora)
       if (type === 'alterar_seguradora') {
         setLeadsFechados(prev => {
@@ -235,6 +225,7 @@ function App() {
           const updated = prev.map(lf => {
             if (leadMatchesIdent(lf, leadId) || (data.phone && norm(data.phone) === norm(lf.phone))) {
               return { ...lf, ...data };
+
             }
             return lf;
           });
@@ -253,7 +244,6 @@ function App() {
       const keyBase = derivedLeadId ? String(derivedLeadId) : (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
       const key = keyBase;
       const timestamp = Date.now();
-
       const stored = {
         ...change,
         id: key,
@@ -263,14 +253,12 @@ function App() {
 
       localChangesRef.current[key] = stored;
       persistLocalChangesToStorage();
-
       // Aplicar imediatamente no estado local para segurar alterações (optimistic)
       applyChangeToLocalState(stored);
     } catch (err) {
       console.error('Erro em saveLocalChange:', err);
     }
   };
-
   // ------------------ FETCH USUÁRIOS ------------------
   const fetchUsuariosForLogin = async () => {
     try {
@@ -284,6 +272,7 @@ function App() {
           nome: data.nome ?? '',
           email: data.email ?? '',
           senha: data.senha ?? '',
+
           status: data.status ?? 'Ativo',
           tipo: data.tipo ?? 'Usuario',
         });
@@ -302,14 +291,12 @@ function App() {
       return () => clearInterval(interval);
     }
   }, [isEditing]);
-
   const formatarDataParaExibicao = (dataString) => {
     if (!dataString) return '';
     try {
       let dateObj;
       const partesHifen = dataString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       const partesBarra = dataString.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-
       if (partesHifen) {
         dateObj = new Date(dataString + 'T00:00:00');
       } else if (partesBarra) {
@@ -327,7 +314,7 @@ function App() {
       const mes = String(dateObj.getMonth() + 1).padStart(2, '0');
       const ano = dateObj.getFullYear();
       const nomeMeses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                         "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
       const mesExtenso = nomeMeses[dateObj.getMonth()];
       const anoCurto = String(ano).substring(2);
 
@@ -358,13 +345,12 @@ function App() {
         try { unsubLeads(); } catch (e) { /* ignore */ }
       };
     } catch (e) {
+
       console.error('Erro iniciando listener leads:', e);
     }
   }, []);
-
   // OBS: removemos listener direto na coleção 'leadsFechados'.
   // Em vez disso, derivamos leadsFechados a partir de 'leads' (coleção única) filtrando insurerConfirmed === true.
-
   // Sempre que 'leads' mudar, atualiza 'leadsFechados' filtrando por insurerConfirmed === true
   useEffect(() => {
     try {
@@ -381,7 +367,6 @@ function App() {
       setLeadsFechados([]);
     }
   }, [leads]);
-
   // Também expomos fetchers pontuais (getDocs) caso algum componente queira forçar refresh manual
   const fetchLeadsFromFirebase = async () => {
     try {
@@ -393,7 +378,6 @@ function App() {
       setLeads([]);
     }
   };
-
   // Atualizado: busca em 'leads' e filtra insurerConfirmed === true
   const fetchLeadsFechadosFromFirebase = async () => {
     try {
@@ -424,6 +408,7 @@ function App() {
           return {
             ...lead,
             name: novoNome,
+
           };
         }
         return lead;
@@ -472,14 +457,12 @@ function App() {
         lead.phone === phone ? { ...lead, status: novoStatus ?? lead.status, confirmado: true } : lead
       )
     );
-
     // Salva localmente para sincronizar depois (agora apenas localChanges persistidos, sem Sheets)
     saveLocalChange({
       id: id,
       type: 'atualizarStatus',
       data: { leadId: id, status: novoStatus, phone: phone || null }
     });
-
     if (novoStatus === 'Fechado') {
       setLeadsFechados((prev) => {
         const jaExiste = prev.some((lead) => lead.phone === phone);
@@ -489,6 +472,7 @@ function App() {
             lead.phone === phone ? { ...lead, Status: novoStatus, confirmado: true } : lead
           );
           return atualizados;
+
         } else {
           const leadParaAdicionar = leads.find((lead) => lead.phone === phone);
 
@@ -497,6 +481,7 @@ function App() {
 
             const novoLeadFechado = {
               ID: newId,
+
               id: newId,
               documentId: leadParaAdicionar.documentId ?? null,
               name: leadParaAdicionar.name,
@@ -504,6 +489,7 @@ function App() {
               vehicleYearModel: leadParaAdicionar.vehicleYearModel,
               city: leadParaAdicionar.city,
               phone: leadParaAdicionar.phone,
+
               insuranceType: leadParaAdicionar.insuranceType || leadParaAdicionar.insuranceType || "",
               Data: leadParaAdicionar.createdAt || new Date().toISOString(),
               Responsavel: usuarioLogado?.nome ?? '',
@@ -534,7 +520,6 @@ function App() {
       });
     }
   };
-
   const handleConfirmAgendamento = async (leadId, dataAgendada) => {
     try {
       if (typeof saveLocalChange === 'function') {
@@ -566,11 +551,9 @@ function App() {
     VigenciaFinal: "",
     VigenciaInicial: "",
   });
-
   // FUNÇÃO confirmarSeguradoraLead (mantida) - atualiza leadsFechados local e salva change local
   const confirmarSeguradoraLead = (id, premio, seguradora, comissao, parcelamento, vigenciaFinal, vigenciaInicial, meioPagamento, cartaoPortoNovo) => {
     const ident = String(id);
-
     try {
       console.debug('[confirmarSeguradoraLead] ident recebido:', ident);
       console.debug('[confirmarSeguradoraLead] leadsFechados snapshot (ID,id,documentId):', leadsFechados.map(l => ({
@@ -584,7 +567,6 @@ function App() {
     }
 
     const found = leadsFechados.find(l => leadMatchesIdent(l, ident));
-
     if (!found) {
       console.warn(`Aviso: Lead com identificador ${ident} não encontrado por ID/id/phone/documentId. Irei criar um placeholder em leadsFechados.`);
     }
@@ -597,6 +579,7 @@ function App() {
             insurerConfirmed: true,
             Seguradora: seguradora,
             PremioLiquido: premio,
+
             Comissao: comissao,
             Parcelamento: parcelamento,
             VigenciaFinal: vigenciaFinal || '',
@@ -605,6 +588,7 @@ function App() {
             CartaoPortoNovo: cartaoPortoNovo || ''
           };
         }
+
         return l;
       });
 
@@ -616,6 +600,7 @@ function App() {
           documentId: ident,
           'Document ID': ident,
           name: '',
+
           phone: '',
           Data: new Date().toISOString(),
           Responsavel: usuarioLogado?.nome ?? '',
@@ -637,7 +622,6 @@ function App() {
 
       return updated;
     });
-
     try {
       const changeId = ident ?? (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
       const dataToSave = {
@@ -662,7 +646,6 @@ function App() {
       console.error('Erro ao enfileirar alteração de seguradora localmente:', error);
     }
   };
-
   const atualizarDetalhesLeadFechado = (id, campo, valor) => {
     setLeadsFechados((prev) =>
       prev.map((lead) =>
@@ -682,7 +665,6 @@ function App() {
     }
 
     let usuario = usuarios.find((u) => u.id == responsavelId);
-
     if (!usuario) {
       return;
     }
@@ -708,7 +690,6 @@ function App() {
     const usuarioEncontrado = usuarios.find(
       (u) => u.usuario === loginInput && u.senha === senhaInput && u.status === 'Ativo'
     );
-
     if (usuarioEncontrado) {
       setIsAuthenticated(true);
       setUsuarioLogado(usuarioEncontrado);
@@ -716,7 +697,6 @@ function App() {
       alert('Login ou senha inválidos ou usuário inativo.');
     }
   };
-
   // FUNÇÃO PARA SALVAR OBSERVAÇÃO (apenas local)
   const salvarObservacao = async (leadId, observacao) => {
     try {
@@ -736,7 +716,6 @@ function App() {
 
   const formatarDataParaDDMMYYYY = (dataString) => {
     if (!dataString) return '';
-
     try {
       let dateObj;
       const partesHifen = dataString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -760,7 +739,7 @@ function App() {
       const mesIndex = dateObj.getMonth();
       const ano = dateObj.getFullYear();
       const nomeMeses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                         "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
       const mesExtenso = nomeMeses[mesIndex];
       const anoCurto = String(ano).substring(2);
 
@@ -770,7 +749,6 @@ function App() {
       return dataString;
     }
   };
-
   // ===================== FUNÇÃO: não força sincronização com Sheets (removido) =====================
   const forceSyncWithSheets = async () => {
     console.log('Sincronização com Google Sheets removida. As alterações são persistidas localmente apenas.');
@@ -780,9 +758,8 @@ function App() {
   if (!isAuthenticated) {
     return (
       <div
-        className={`flex items-center justify-center min-h-screen bg-cover bg-center transition-opacity duration-1000 ${
-          backgroundLoaded ? 'opacity-100' : 'opacity-0'
-        }`}
+        className={`flex items-center justify-center min-h-screen bg-cover bg-center transition-opacity duration-1000 ${backgroundLoaded ? 'opacity-100' : 'opacity-0'
+          }`}
         style={{
           backgroundImage: `url('/background.png')`,
         }}
@@ -794,6 +771,7 @@ function App() {
             </div>
             <h1 className="text-xl font-semibold">GRUPO</h1>
             <h2 className="text-2xl font-bold text-white">PRIMME SEGUROS</h2>
+
             <p className="text-sm text-white">CORRETORA DE SEGUROS</p>
           </div>
 
@@ -803,6 +781,7 @@ function App() {
             value={loginInput}
             onChange={(e) => setLoginInput(e.target.value)}
             className="w-full mb-4 px-4 py-2 rounded text-black"
+
           />
           <input
             type="password"
@@ -811,6 +790,7 @@ function App() {
             onChange={(e) => setSenhaInput(e.target.value)}
             className="w-full mb-2 px-4 py-2 rounded text-black"
           />
+
           <div className="text-right text-sm mb-4">
             <a href="#" className="text-white underline">
             </a>
@@ -819,6 +799,7 @@ function App() {
             onClick={handleLogin}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
           >
+
             ENTRAR
           </button>
         </div>
@@ -841,9 +822,6 @@ function App() {
             element={
               <Dashboard
                 usuarioLogado={usuarioLogado}
-                setIsEditing={setIsEditing}
-                leads={leads}
-                leadsFechados={leadsFechados}
               />
             }
           />
@@ -864,6 +842,7 @@ function App() {
                 salvarObservacao={salvarObservacao}
                 saveLocalChange={saveLocalChange}
                 forceSyncWithSheets={forceSyncWithSheets}
+
               />
             }
           />
@@ -888,6 +867,7 @@ function App() {
               />
             }
           />
+
           {/* Rota para Renovados */}
           <Route
             path="/renovados"
@@ -904,6 +884,7 @@ function App() {
                 isAdmin={isAdmin}
               />
             }
+
           />
           <Route
             path="/leads-fechados"
@@ -913,11 +894,11 @@ function App() {
                   isAdmin
                     ? leadsFechados
                     : leadsFechados.filter((lead) =>
-                        String(lead.responsavel) === String(usuarioLogado.nome) ||
-                        String(lead.Responsavel) === String(usuarioLogado.nome) ||
-                        String(lead.usuarioId) === String(usuarioLogado.id) ||
-                        String(lead.usuario) === String(usuarioLogado.usuario)
-                      )
+                      String(lead.responsavel) === String(usuarioLogado.nome) ||
+                      String(lead.Responsavel) === String(usuarioLogado.nome) ||
+                      String(lead.usuarioId) === String(usuarioLogado.id) ||
+                      String(lead.usuario) === String(usuarioLogado.usuario)
+                    )
                 }
                 usuarios={usuarios}
                 onUpdateInsurer={atualizarSeguradoraLead}
@@ -933,6 +914,7 @@ function App() {
                 scrollContainerRef={mainContentRef}
                 onLeadNameUpdate={handleLeadFechadoNameUpdate}
               />
+
             }
           />
           <Route
@@ -961,6 +943,7 @@ function App() {
           />
           {isAdmin && (
             <>
+
               <Route path="/criar-usuario" element={<CriarUsuario adicionarUsuario={adicionarUsuario} />} />
               <Route
                 path="/usuarios"
@@ -968,6 +951,7 @@ function App() {
               />
             </>
           )}
+
           <Route path="/ranking" element={<Ranking
             usuarios={usuarios}
             fetchLeadsFromSheet={fetchLeadsFromFirebase}
