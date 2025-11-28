@@ -1048,8 +1048,8 @@ const Renovacoes = ({ usuarios, onUpdateStatus, transferirLead, usuarioLogado, s
                                 <label className="block text-sm font-medium text-gray-700">Meio de Pagamento</label>
                                 <select value={modalMeioPagamento} onChange={(e) => setModalMeioPagamento(e.target.value)} className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
                                     <option value="">Selecione</option>
-                                    <option value="CP">Cartão de Crédito Porto</option>
-                                    <option value="CC">Cartão de Crédito</option>
+                                    <option value="CP">CP</option>
+                                    <option value="CC">CC</option>
                                     <option value="Debito">Débito</option>
                                     <option value="Boleto">Boleto</option>
                                 </select>
