@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCcw } from 'lucide-react'; // Importação do ícone de refresh
 
 const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'User', nome: '' } }) => {
@@ -25,7 +25,7 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
     if (!dateValue) return null;
 
     // Firestore Timestamp (objeto com seconds)
-    if (typeof dateValue === 'object' && dateValue.seconds && typeof dateValue.seconds === 'number') {
+    if (typeof dateValue === 'object' && dateValue !== null && typeof dateValue.seconds === 'number') {
       const d = new Date(dateValue.seconds * 1000);
       return d.toISOString().slice(0, 10);
     }
@@ -70,7 +70,6 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
 
   // refresh automático ao entrar na aba (mantido para compatibilidade)
   useEffect(() => {
-    // Se houver dados em props, apenas usa-os; caso contrário dispara a função que "atualiza" a partir das props (no App os listeners atualizam)
     if (Array.isArray(leadsFechados) && leadsFechados.length > 0) {
       setLeadsClosed(leadsFechados);
       setLoading(false);
@@ -84,33 +83,97 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
     setFiltroAplicado({ inicio: dataInicio, fim: dataFim });
   };
 
-  // Filtro por data dos leads gerais (vindos via prop `leads`)
-  const leadsFiltradosPorDataGeral = (leads || []).filter((lead) => {
-    const dataLeadStr = getValidDateStr(lead.createdAt);
+  // ---------- Funções copiadas/adaptadas do Leads.jsx para visibilidade ----------
+  const normalizarTexto = (texto = '') => {
+    return texto
+      .toString()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()@\+\?><\[\]\+]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const getCurrentUserFromPropOrStorage = () => {
+    if (usuarioLogado) return usuarioLogado;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const canViewLead = (lead) => {
+    // Admin vê todos
+    const isAdmin = usuarioLogado?.tipo === 'Admin';
+    if (isAdmin) return true;
+
+    const user = getCurrentUserFromPropOrStorage();
+    if (!user) return false;
+
+    const userId = String(user.id ?? user.ID ?? user.userId ?? '').trim();
+    const userNome = String(user.nome ?? user.name ?? user.usuario ?? '').trim().toLowerCase();
+
+    // lead.usuarioId can be number or string
+    const leadUsuarioId = (lead.usuarioId !== undefined && lead.usuarioId !== null) ? String(lead.usuarioId).trim() : '';
+    if (leadUsuarioId && userId && leadUsuarioId === userId) return true;
+
+    const leadResponsavel = String(lead.responsavel ?? lead.Responsavel ?? '').trim().toLowerCase();
+    if (leadResponsavel && userNome && leadResponsavel === userNome) return true;
+
+    const leadUsuarioLogin = String(lead.usuario ?? lead.user ?? '').trim();
+    const userLogin = String(user.usuario ?? '').trim();
+    if (leadUsuarioLogin && userLogin && leadUsuarioLogin === userLogin) return true;
+
+    return false;
+  };
+  // ------------------------------------------------------------------------------
+
+  // Filtro por data dos leads gerais (vindos via prop `leads`) — mas agora aplicamos visibilidade
+  const leadsVisiveis = Array.isArray(leads) ? leads.filter((l) => canViewLead(l)) : [];
+
+  // Função para checar se lead está dentro do intervalo de data aplicado (usa createdAt)
+  const leadDentroDoPeriodo = (lead) => {
+    const dataLeadStr = getValidDateStr(lead.createdAt ?? lead.Data ?? lead.DataFechamento ?? null);
     if (!dataLeadStr) return false;
     if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
     if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
     return true;
-  });
+  };
 
-  const totalLeads = leadsFiltradosPorDataGeral.length;
-  const leadsPerdidos = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Perdido').length;
-  const leadsEmContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Em Contato').length;
-  const leadsSemContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Sem Contato').length;
+  // Agora, total de leads segue a mesma lógica do Leads.jsx: conta todos visíveis que NÃO são 'Perdido' (aplica filtro de data)
+  const totalLeads = leadsVisiveis.filter((lead) => {
+    const status = lead.status ?? lead.Status ?? '';
+    if (String(status) === 'Perdido') return false;
+    return leadDentroDoPeriodo(lead);
+  }).length;
 
-  // Filtra leads fechados por responsável (do estado `leadsClosed`)
+  // Vendas: conta leads visíveis com status === 'Fechado' (aplica filtro de data)
+  const vendasCount = leadsVisiveis.filter((lead) => {
+    const status = lead.status ?? lead.Status ?? '';
+    if (String(status) !== 'Fechado') return false;
+    return leadDentroDoPeriodo(lead);
+  }).length;
+
+  // Para compatibilidade com o restante do código, usamos leadsFechadosCount = vendasCount
+  const leadsFechadosCount = vendasCount;
+
+  // Ainda mantemos os contadores por seguradora com base em leadsFiltradosClosed (usando leadsClosed prop),
+  // para não modificar demais comportamentos que dependem especificamente dessa coleção.
+  // Porém, se preferir que estes contadores também venham de `leads` (status 'Fechado'), me diga e eu adapto.
   let leadsFiltradosClosed =
     (usuarioLogado?.tipo === 'Admin')
       ? (leadsClosed || [])
       : (leadsClosed || []).filter((lead) => {
-          // Suporta diferentes chaves: Responsavel, responsavel, usuarioId/usuario
           const resp = (lead.Responsavel ?? lead.responsavel ?? '').toString();
           return resp === (usuarioLogado?.nome || '');
         });
 
-  // Filtro de data nos leads fechados
+  // Filtro de data nos leads fechados (usando campo Data / createdAt)
   leadsFiltradosClosed = (leadsFiltradosClosed || []).filter((lead) => {
-    // CORREÇÃO: não misturar '||' com '??' — escolhemos uma sequência de nullish-coalescing
     const possibleDate = lead.Data ?? lead.createdAt ?? lead.DataFechamento ?? null;
     const dataLeadStr = getValidDateStr(possibleDate);
     if (!dataLeadStr) return false;
@@ -147,37 +210,40 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
   // Agora 'demais' conta qualquer lead cuja seguradora esteja na lista acima (case-insensitive)
   const demais = leadsFiltradosClosed.filter((lead) => demaisSeguradorasLista.includes(getSegNormalized(lead))).length;
 
-  // O campo Vendas soma os contadores das seguradoras
-  const leadsFechadosCount = portoSeguro + azulSeguros + itauSeguros + demais;
-
   // CÁLCULO DA TAXA DE CONVERSÃO (Nova lógica)
   const taxaConversao =
     totalLeads > 0
-      ? Math.round((leadsFechadosCount / totalLeads) * 100) // Calcula, multiplica por 100 e arredonda
+      ? Math.round((leadsFechadosCount / totalLeads) * 100)
       : 0;
 
-  // Soma de prêmio líquido
+  // Soma de prêmio líquido (baseado em leadsFiltradosClosed)
   const totalPremioLiquido = leadsFiltradosClosed.reduce(
     (acc, lead) => acc + (Number(lead.PremioLiquido ?? lead.premioLiquido ?? lead.Premio ?? 0) || 0),
     0
   );
 
-  // --- CÁLCULO DA MÉDIA COMISSÃO (AJUSTADO CONFORME SOLICITADO) ---
-  // Lógica: Total de percentual de comissao dividido pelo numero total de Vendas.
-
-  // 1. Soma total dos percentuais de comissão
+  // --- CÁLCULO DA MÉDIA COMISSÃO (AJUSTADO) ---
   const somaTotalPercentualComissao = leadsFiltradosClosed.reduce(
     (acc, lead) => acc + (Number(lead.Comissao ?? lead.comissao ?? 0) || 0),
     0
   );
 
-  // 2. Número total de vendas (igual a leadsFiltradosClosed.length)
   const totalVendasParaMedia = leadsFiltradosClosed.length;
-
-  // 3. Média Comissão: Total Percentual / Total Vendas
   const comissaoMediaGlobal =
     totalVendasParaMedia > 0 ? somaTotalPercentualComissao / totalVendasParaMedia : 0;
   // --- FIM CÁLCULO AJUSTADO ---
+
+  const leadsFiltradosPorDataGeral = (leadsVisiveis || []).filter((lead) => {
+    const dataLeadStr = getValidDateStr(lead.createdAt);
+    if (!dataLeadStr) return false;
+    if (filtroAplicado.inicio && dataLeadStr < filtroAplicado.inicio) return false;
+    if (filtroAplicado.fim && dataLeadStr > filtroAplicado.fim) return false;
+    return true;
+  });
+
+  const leadsPerdidos = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Perdido').length;
+  const leadsEmContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Em Contato').length;
+  const leadsSemContato = leadsFiltradosPorDataGeral.filter((lead) => lead.status === 'Sem Contato').length;
 
   const boxStyle = {
     padding: '10px',
@@ -273,7 +339,6 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
       {loading && (
         <div style={{ textAlign: 'center', padding: '20px' }}>
           <p>Carregando dados do dashboard...</p>
-          {/* Você pode adicionar um spinner aqui se quiser um indicador visual */}
         </div>
       )}
 
@@ -285,12 +350,10 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
               <h3>Total de Leads</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{totalLeads}</p>
             </div>
-            {/* NOVO COTADO: TAXA DE CONVERSÃO */}
-            <div style={{ ...boxStyle, backgroundColor: '#9C27B0' }}> {/* Nova cor para destacar */}
+            <div style={{ ...boxStyle, backgroundColor: '#9C27B0' }}>
               <h3>Taxa de Conversão</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{taxaConversao}%</p>
             </div>
-            {/* FIM DO NOVO COTADO */}
             <div style={{ ...boxStyle, backgroundColor: '#4CAF50' }}>
               <h3>Vendas</h3>
               <p style={{ fontSize: '24px', fontWeight: 'bold' }}>{leadsFechadosCount}</p>
@@ -330,24 +393,24 @@ const Dashboard = ({ leads = [], leadsFechados = [], usuarioLogado = { tipo: 'Us
           </div>
 
           {/* Somente para Admin: linha de Prêmio Líquido e Comissão */}
-            <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-              <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
-                <h3>Total Prêmio Líquido</h3>
-                <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {totalPremioLiquido.toLocaleString('pt-BR', {
-                    style: 'currency',
-                    currency: 'BRL',
-                  })}
-                </p>
-              </div>
-                
-              <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
-                <h3>Média Comissão</h3>
-                <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {comissaoMediaGlobal.toFixed(2).replace('.', ',')}%
-                </p>
-              </div>
+          <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
+            <div style={{ ...boxStyle, backgroundColor: '#3f51b5' }}>
+              <h3>Total Prêmio Líquido</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
+                {totalPremioLiquido.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </p>
             </div>
+
+            <div style={{ ...boxStyle, backgroundColor: '#009688' }}>
+              <h3>Média Comissão</h3>
+              <p style={{ fontSize: '24px', fontWeight: 'bold' }}>
+                {comissaoMediaGlobal.toFixed(2).replace('.', ',')}%
+              </p>
+            </div>
+          </div>
         </>
       )}
     </div>
