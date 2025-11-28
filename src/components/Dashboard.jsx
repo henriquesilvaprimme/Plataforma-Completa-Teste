@@ -44,21 +44,9 @@ const Dashboard = ({
   // Mensagem de debug / status para ajudar a diagnosticar
   const [debugMsg, setDebugMsg] = useState('');
 
-  // Tenta obter sessionId do localStorage caso não tenha sido passado via prop
-  const getSessionId = () => {
-    if (sessionId) return sessionId;
-    try {
-      const stored = localStorage.getItem('sessionId') || localStorage.getItem('sessao') || null;
-      return stored;
-    } catch (e) {
-      return null;
-    }
-  };
-
-  // Pequena lista de nomes alternativos de campo que podem armazenar a sessão no documento
+  // Lista de nomes alternativos de campo que podem armazenar a sessão no documento
   const possibleSessionFields = useMemo(() => {
     const base = [sessionField].filter(Boolean);
-    // adiciona alternativas comuns
     [
       'sessionId',
       'session_id',
@@ -73,48 +61,84 @@ const Dashboard = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionField]);
 
-  // Fallback: conta a partir da prop leads local, buscando pelo campo de sessão em possibleSessionFields
-  const countFromLeadsPropBySession = (sess) => {
+  // Tenta obter sessionId do localStorage caso não tenha sido passado via prop
+  const getSessionIdFromStorage = () => {
     try {
-      if (!Array.isArray(leads) || !sess) return 0;
-      const matched = leads.filter((d) => {
-        for (const f of possibleSessionFields) {
-          if (d == null) continue;
-          // compara string/number normalizados
-          const val = d[f];
-          if (val === undefined) continue;
-          if (String(val) === String(sess)) return true;
-        }
-        return false;
-      });
-      console.debug('[Dashboard] Fallback counting from leads prop, found:', matched.length);
-      setDebugMsg(`Fallback: contados ${matched.length} leads a partir de prop 'leads' (campos verificados: ${possibleSessionFields.join(', ')})`);
-      return matched.length;
-    } catch (err) {
-      console.error('[Dashboard] Erro fallback countFromLeadsPropBySession:', err);
-      return 0;
+      return localStorage.getItem('sessionId') || localStorage.getItem('sessao') || null;
+    } catch (e) {
+      return null;
     }
+  };
+
+  // Tenta inferir sessionId a partir da prop `leads` (retorna o valor mais frequente encontrado em possibleSessionFields)
+  const inferSessionFromLeadsProp = () => {
+    try {
+      if (!Array.isArray(leads) || leads.length === 0) return null;
+      const freq = {}; // { value: count }
+      for (const doc of leads) {
+        if (!doc) continue;
+        for (const f of possibleSessionFields) {
+          const val = doc[f];
+          if (val === undefined || val === null) continue;
+          const key = String(val).trim();
+          if (!key) continue;
+          freq[key] = (freq[key] || 0) + 1;
+        }
+      }
+      // pega o valor com maior contagem
+      let best = null;
+      let bestCount = 0;
+      Object.entries(freq).forEach(([val, cnt]) => {
+        if (cnt > bestCount) {
+          best = val;
+          bestCount = cnt;
+        }
+      });
+      if (best) {
+        console.debug('[Dashboard] Inferiu sessionId a partir da prop leads:', best, '(', bestCount, 'ocorrências )');
+        return best;
+      }
+      return null;
+    } catch (err) {
+      console.error('[Dashboard] Erro ao inferir session from leads prop:', err);
+      return null;
+    }
+  };
+
+  // Função unificada que retorna o sessionId a ser usado (prop -> storage -> inferência)
+  const resolveSessionId = () => {
+    if (sessionId) {
+      setDebugMsg(`Usando sessionId via prop: ${sessionId}`);
+      return sessionId;
+    }
+    const fromStorage = getSessionIdFromStorage();
+    if (fromStorage) {
+      setDebugMsg(`Usando sessionId via localStorage: ${fromStorage}`);
+      return fromStorage;
+    }
+    const inferred = inferSessionFromLeadsProp();
+    if (inferred) {
+      setDebugMsg(`Usando sessionId inferido a partir da prop leads: ${inferred}`);
+      return inferred;
+    }
+    setDebugMsg('sessionId não fornecido nem encontrado no localStorage nem inferido a partir de leads.');
+    return null;
   };
 
   // Listener Firestore: busca documentos da coleção 'leads' filtrando por campo de sessão
   useEffect(() => {
-    const sess = getSessionId();
+    const sess = resolveSessionId();
     if (!sess) {
-      console.warn('Dashboard: sessionId não fornecido nem encontrado no localStorage.');
+      console.warn('Dashboard: sessionId não fornecido nem encontrado no localStorage/inferido. Total de Leads não será buscado do Firestore.');
       setLeadsSessionFirestore([]);
       setLoading(false);
-      setDebugMsg('sessionId ausente; nenhum lead será buscado do Firestore.');
       return;
     }
 
     setLoading(true);
     setDebugMsg(`Criando listener Firestore para sessão '${sess}', campo padrão '${sessionField}'`);
 
-    // Tenta criar queries para cada possível campo até encontrar um que funcione.
-    // Observação: várias queries aumentam leituras; mantemos tentativa com o campo preferido e fallback a getDocs sem where se necessário.
     const leadsCol = collection(db, 'leads');
-
-    // Primeiro, tente criar query com o campo preferido (sessionField).
     const q = query(leadsCol, where(sessionField, '==', sess));
 
     let unsubscribed = false;
@@ -145,18 +169,13 @@ const Dashboard = ({
       setLoading(false);
     }
 
-    // Se em 1.2s não tivermos docs, tentamos um fallback: buscar todos e fazer filtro client-side (menos ideal, mas garante contagem correta)
+    // Fallback: se após 1200ms não houver docs, faz getDocs e filtra localmente por possibleSessionFields
     const fallbackTimer = setTimeout(async () => {
-      // Se já chegaram docs pelo listener — não faz fallback
-      if (leadsSessionFirestore.length > 0) {
-        return;
-      }
+      if (leadsSessionFirestore.length > 0) return;
       try {
-        // Busca todos os docs da collection (cuidado com coleções grandes)
         setDebugMsg('Fallback: buscando todos os docs de "leads" e filtrando localmente pela sessão (pode ser custoso).');
         const snap = await getDocs(leadsCol);
         const allDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // Filtra por possíveis campos
         const filtered = allDocs.filter((doc) => {
           for (const f of possibleSessionFields) {
             if (doc == null) continue;
@@ -166,15 +185,12 @@ const Dashboard = ({
           }
           return false;
         });
-        // Se encontramos resultados, atualizamos o estado e removemos o listener anterior (se necessário)
         if (filtered.length > 0) {
           console.debug('[Dashboard] Fallback local encontrou docs:', filtered.length);
           setLeadsSessionFirestore(filtered);
           setLoading(false);
           setDebugMsg(`Fallback local encontrou ${filtered.length} leads (campos verificados: ${possibleSessionFields.join(', ')}).`);
-          // Se havia listener anterior e iremos preferir fallback, ainda mantemos o listener para atualizações futuras.
         } else {
-          // Se fallback não encontrou nada, set msg indicando isso
           setDebugMsg('Nenhum lead encontrado no Firestore para a sessão (tanto query por campo preferido quanto fallback local retornaram 0).');
         }
       } catch (err) {
@@ -195,13 +211,12 @@ const Dashboard = ({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, sessionField]);
+  }, [sessionId, sessionField, JSON.stringify(leads)]); // adicionamos leads ao deps para permitir inferência ao mudar leads
 
   // Função para forçar "refresh" (recalcula / atualiza mensagens)
   const refreshLeadsFromFirestore = async () => {
     setIsRefreshLoading(true);
     setDebugMsg('Forçando refresh manual (recontagem).');
-    // Pequeno atraso para UX
     setTimeout(() => {
       setIsRefreshLoading(false);
     }, 800);
@@ -209,16 +224,34 @@ const Dashboard = ({
 
   // Contagem de Total de Leads: conta IDs únicos vindos do Firestore para a sessão.
   // Se não houver resultados no Firestore, usa fallback a partir da prop `leads`.
+  const countFromLeadsPropBySession = (sess) => {
+    try {
+      if (!Array.isArray(leads) || !sess) return 0;
+      const matched = leads.filter((d) => {
+        for (const f of possibleSessionFields) {
+          if (d == null) continue;
+          const val = d[f];
+          if (val === undefined) continue;
+          if (String(val) === String(sess)) return true;
+        }
+        return false;
+      });
+      console.debug('[Dashboard] Fallback counting from leads prop, found:', matched.length);
+      setDebugMsg(`Fallback: contados ${matched.length} leads a partir de prop 'leads' (campos verificados: ${possibleSessionFields.join(', ')})`);
+      return matched.length;
+    } catch (err) {
+      console.error('[Dashboard] Erro fallback countFromLeadsPropBySession:', err);
+      return 0;
+    }
+  };
+
   const totalLeads = (() => {
     try {
       if (Array.isArray(leadsSessionFirestore) && leadsSessionFirestore.length > 0) {
         const uniqueIds = new Set(leadsSessionFirestore.map((l) => String(l.id)));
-        const count = uniqueIds.size;
-        return count;
+        return uniqueIds.size;
       }
-
-      // fallback para contar a partir da prop `leads`
-      const sess = getSessionId();
+      const sess = resolveSessionId();
       const fallbackCount = countFromLeadsPropBySession(sess);
       return fallbackCount;
     } catch (err) {
