@@ -49,6 +49,8 @@ function App() {
   const [usuarios, setUsuarios] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
   const [ultimoFechadoId, setUltimoFechadoId] = useState(null);
+  // Novo estado para controlar o carregamento dos leads
+  const [isLoading, setIsLoading] = useState(true); 
   // Referência em memória das alterações locais (evita leituras/desescritas excessivas)
   const localChangesRef = useRef({});
   // formato: { [key]: { id, leadId, type, data, timestamp, ... } }
@@ -186,9 +188,9 @@ function App() {
       ...item,
     };
   };
-  // util: normalize string for comparisons
+  // util: normalize string for comparisons (remove spaces, lowercase)
   const norm = (v) => (v === undefined || v === null) ?
-    '' : String(v).trim();
+    '' : String(v).trim().toLowerCase().replace(/\s/g, '');
 
   // util: compara um lead com um identificador (aceita id, ID, phone ou documentId), com trim
   const leadMatchesIdent = (lead, ident) => {
@@ -370,8 +372,10 @@ function App() {
           return normalizeLead(raw);
         });
         setLeads(arr);
+        setIsLoading(false); // <--- ATUALIZAÇÃO: Dados carregados com sucesso
       }, (err) => {
         console.error('Erro no listener leads:', err);
+        setIsLoading(false); // <--- ATUALIZAÇÃO: Termina o loading mesmo com erro
       });
 
       return () => {
@@ -380,6 +384,7 @@ function App() {
     } catch (e) {
     
       console.error('Erro iniciando listener leads:', e);
+      setIsLoading(false); // <--- ATUALIZAÇÃO: Termina o loading em erro de setup
     }
   }, []);
   // OBS: removemos listener direto na coleção 'leadsFechados'.
@@ -874,6 +879,17 @@ function App() {
   }
 
   const isAdmin = usuarioLogado?.tipo === 'Admin';
+  // <--- ATUALIZAÇÃO: Exibir estado de carregamento se estiver autenticado e carregando
+  if (isAuthenticated && isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen" style={{ backgroundColor: '#f4f4f4' }}>
+        <h1 className="text-xl font-semibold text-blue-800">Carregando dados...</h1>
+      </div>
+    );
+  }
+  // FIM DA ATUALIZAÇÃO
+
+  const nomeUsuarioNormalizado = norm(usuarioLogado?.nome);
 
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
@@ -890,7 +906,7 @@ function App() {
               <Dashboard
                 usuarioLogado={usuarioLogado}
                 leads={leads}
-                renovacoes={leads} /* Adicionado para contagem de Renovações (usa leads) */
+                renovacoes={leads} /* Passa leads para ambos, a contagem interna faz o filtro */
               />
             }
           />
@@ -898,7 +914,8 @@ function App() {
             path="/leads"
             element={
               <Leads
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))}
+                // ATUALIZAÇÃO: Filtro robusto para usuários normais (baseado em norm())
+                leads={isAdmin ? leads : (leads || []).filter((lead) => norm(lead.responsavel) === nomeUsuarioNormalizado )}
  
                 usuarios={usuarios}
                 onUpdateStatus={atualizarStatusLead}
@@ -923,18 +940,19 @@ function App() {
             element={
               <Renovacoes
            
-                leads={isAdmin ? leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovações
+                // ATUALIZAÇÃO: Filtro robusto para usuários normais
+                leads={isAdmin ? leads : (leads || []).filter((lead) => norm(lead.responsavel) === nomeUsuarioNormalizado)} 
                 usuarios={usuarios}
-                onUpdateStatus={atualizarStatusLead} // Pode ser necessário uma função específica para renovações
-                fetchLeadsFromSheet={fetchLeadsFromFirebase} // Pode ser necessário uma função específica para renovações
+                onUpdateStatus={atualizarStatusLead} 
+                fetchLeadsFromSheet={fetchLeadsFromFirebase} 
           
-                transferirLead={transferirLead} // Pode ser necessário uma função específica para renovações
+                transferirLead={transferirLead} 
                 usuarioLogado={usuarioLogado}
                 leadSelecionado={leadSelecionado}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
-                onConfirmAgendamento={handleConfirmAgendamento} // Pode ser necessário uma função específica para renovações
-                salvarObservacao={salvarObservacao} // Pode ser necessário uma função específica para renovações
+                onConfirmAgendamento={handleConfirmAgendamento} 
+                salvarObservacao={salvarObservacao} 
                 saveLocalChange={saveLocalChange}
                 forceSyncWithSheets={forceSyncWithSheets}
               />
@@ -946,12 +964,13 @@ function App() {
             path="/renovados"
             element={
               <Renovados
+                // ATUALIZAÇÃO: Filtro robusto para usuários normais
                 leads={isAdmin ?
-                  leads : leads.filter((lead) => String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome))} // Ajuste conforme a lógica de renovados
+                  leads : (leads || []).filter((lead) => norm(lead.responsavel) === nomeUsuarioNormalizado)} 
                 usuarios={usuarios}
-                onUpdateInsurer={atualizarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
-                onConfirmInsurer={confirmarSeguradoraLead} // Usando a função de LeadsFechados, se aplicável
-                onUpdateDetalhes={atualizarDetalhesLeadFechado} // Usando a função de LeadsFechados, se aplicável
+                onUpdateInsurer={atualizarSeguradoraLead} 
+                onConfirmInsurer={confirmarSeguradoraLead} 
+                onUpdateDetalhes={atualizarDetalhesLeadFechado} 
                 usuarioLogado={usuarioLogado}
                 setIsEditing={setIsEditing}
                 scrollContainerRef={mainContentRef}
@@ -968,13 +987,8 @@ function App() {
                   isAdmin
              
                     ? leadsFechados
-                    : leadsFechados.filter((lead) =>
-                        String(lead.responsavel) === String(usuarioLogado.nome) ||
-                        String(lead.Responsavel) === String(usuarioLogado.nome) ||
-                
-                        String(lead.usuarioId) === String(usuarioLogado.id) ||
-                        String(lead.usuario) === String(usuarioLogado.usuario)
-                      )
+                    // ATUALIZAÇÃO: Filtro robusto para leads fechados (simplificado e usando norm())
+                    : (leadsFechados || []).filter((lead) => norm(lead.responsavel) === nomeUsuarioNormalizado)
                 }
                 usuarios={usuarios}
          
@@ -999,8 +1013,9 @@ function App() {
             path="/leads-perdidos"
             element={
               <LeadsPerdidos
+                // ATUALIZAÇÃO: Filtro robusto para leads perdidos
                 leads={isAdmin ?
-                  leads.filter((lead) => String(lead.status) === 'Perdido') : leads.filter((lead) => (String(lead.responsavel) === String(usuarioLogado.nome) || String(lead.Responsavel) === String(usuarioLogado.nome)) && String(lead.status) === 'Perdido')}
+                  leads.filter((lead) => String(lead.status) === 'Perdido') : leads.filter((lead) => norm(lead.responsavel) === nomeUsuarioNormalizado && String(lead.status) === 'Perdido')}
                 usuarios={usuarios}
                 fetchLeadsFromSheet={fetchLeadsFromFirebase}
                 onAbrirLead={onAbrirLead}
