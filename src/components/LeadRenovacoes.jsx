@@ -184,10 +184,10 @@ const Lead = ({ lead, onUpdateStatus, disabledConfirm, isAdmin }) => {
       )}
       
       {/* CAMPOS ATUALIZADOS AQUI */}
-      <p><strong>Nome:</strong> {lead.name}</p>
-      <p><strong>Modelo do veículo:</strong> {lead.vehicleModel}</p>
-      <p><strong>Ano/Modelo:</strong> {lead.vehicleYearModel}</p>
-      <p><strong>Telefone:</strong> {lead.phone}</p>
+      <p><strong>Nome:</strong> {lead.Nome}</p>
+      <p><strong>Modelo do veículo:</strong> {lead.Modelo}</p>
+      <p><strong>Ano/Modelo:</strong> {lead.AnoModelo}</p>
+      <p><strong>Telefone:</strong> {lead.Telefone}</p>
       <p><strong>Seguradora:</strong> {lead.Seguradora || 'N/A'}</p>
       <p><strong>Prêmio Líquido:</strong> {formatCurrency(lead.PremioLiquido)}</p>
       <p><strong>Comissão:</strong> {lead.Comissao}%</p>
